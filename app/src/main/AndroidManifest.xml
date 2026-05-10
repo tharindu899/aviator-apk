@@ -5,25 +5,17 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Notifications -->
+    <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Required to install downloaded APKs on Android 8+ -->
+    <!-- Required to launch the system installer for downloaded APKs -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!--
-        Storage permissions for DownloadManager writing to public Downloads.
-        WRITE_EXTERNAL_STORAGE is only needed on API 28 and below.
-        READ_EXTERNAL_STORAGE is needed on API 32 and below to read back the file.
-        On API 29+ scoped storage allows reading files your app wrote without READ permission,
-        but the explicit declaration is kept for maximum device compatibility.
+        No WRITE/READ_EXTERNAL_STORAGE needed:
+        UpdateInstaller uses getExternalFilesDir() which is the app's own
+        scoped storage — no permission required on any API level.
     -->
-    <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
-    <uses-permission
-        android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
 
     <application
         android:allowBackup="true"
@@ -58,7 +50,10 @@
 
         <!--
             FileProvider — exposes the downloaded APK to the system installer.
-            authorities must match the string used in UpdateInstaller.installApk()
+            Path config in res/xml/file_provider_paths.xml covers:
+              • App-private external Downloads (primary)
+              • Public Download / Downloads (fallback)
+              • Full external root (safety net for MIUI path remapping)
         -->
         <provider
             android:name="androidx.core.content.FileProvider"

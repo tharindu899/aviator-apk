@@ -24,12 +24,16 @@ object UpdateInstaller {
 
     /**
      * Enqueues the APK download via [DownloadManager].
-     * Saves to the PUBLIC Downloads folder so FileProvider can serve it.
-     * Returns the download ID, or -1L on failure.
+     * Saves into the app's own external files dir (no storage permission needed,
+     * and FileProvider can always serve it via <external-files-path>).
      */
     fun startDownload(context: Context, downloadUrl: String, fileName: String): Long {
         return try {
             val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+
+            // Ensure destination directory exists
+            val destDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            destDir?.mkdirs()
 
             val request = DownloadManager.Request(Uri.parse(downloadUrl)).apply {
                 setTitle("Aviator Predictor Update")
@@ -37,8 +41,13 @@ object UpdateInstaller {
                 setNotificationVisibility(
                     DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
                 )
-                // Use PUBLIC Downloads dir — matches <external-path> in file_provider_paths.xml
-                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+                // App-private external dir — no READ/WRITE_EXTERNAL_STORAGE permission needed
+                // FileProvider serves this via <external-files-path name="downloads" path="Downloads/"/>
+                setDestinationInExternalFilesDir(
+                    context,
+                    Environment.DIRECTORY_DOWNLOADS,
+                    fileName
+                )
                 setAllowedNetworkTypes(
                     DownloadManager.Request.NETWORK_WIFI or
                     DownloadManager.Request.NETWORK_MOBILE
@@ -54,10 +63,7 @@ object UpdateInstaller {
     }
 
     /**
-     * Polls [DownloadManager] and emits [DownloadProgress] until the download
-     * finishes or fails. Call inside a coroutine / flow.
-     *
-     * Note: [fileName] is required to resolve the file path on completion.
+     * Polls [DownloadManager] and emits [DownloadProgress] until done or failed.
      */
     suspend fun pollProgress(
         context: Context,
@@ -89,8 +95,12 @@ object UpdateInstaller {
 
             when (status) {
                 DownloadManager.STATUS_SUCCESSFUL -> {
-                    val file = resolveDownloadedFile(localUri, fileName)
-                    onProgress(DownloadProgress(percent = 100, isComplete = true, localFile = file))
+                    val file = resolveFile(context, localUri, fileName)
+                    if (file != null) {
+                        onProgress(DownloadProgress(percent = 100, isComplete = true, localFile = file))
+                    } else {
+                        onProgress(DownloadProgress(isFailed = true))
+                    }
                     break
                 }
                 DownloadManager.STATUS_FAILED -> {
@@ -112,93 +122,140 @@ object UpdateInstaller {
     }
 
     /**
-     * Resolves the downloaded APK [File] from a local URI string.
-     * Falls back to the known public Downloads path if URI parsing fails.
+     * Resolves the APK [File] after download completes.
+     * Tries multiple strategies so MIUI path mangling doesn't break things.
      */
-    private fun resolveDownloadedFile(localUri: String?, fileName: String): File? {
-        if (localUri != null) {
+    private fun resolveFile(context: Context, localUri: String?, fileName: String): File? {
+        // Strategy 1: parse the URI the DownloadManager gave us
+        if (!localUri.isNullOrBlank()) {
             try {
                 val path = Uri.parse(localUri).path
-                if (path != null) {
+                if (!path.isNullOrBlank()) {
                     val f = File(path)
-                    if (f.exists()) return f
+                    if (f.exists() && f.length() > 0) return f
                 }
             } catch (_: Exception) {}
         }
-        // Fallback: reconstruct from known destination
-        val fallback = File(
+
+        // Strategy 2: canonical app-private external Downloads path
+        val appPrivate = File(
+            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+            fileName
+        )
+        if (appPrivate.exists() && appPrivate.length() > 0) return appPrivate
+
+        // Strategy 3: public Downloads (fallback for older DownloadManager behaviour)
+        val publicDownloads = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
             fileName
         )
-        return if (fallback.exists()) fallback else null
+        if (publicDownloads.exists() && publicDownloads.length() > 0) return publicDownloads
+
+        return null
     }
 
     /**
      * Cancels an in-progress download.
      */
     fun cancelDownload(context: Context, downloadId: Long) {
-        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        dm.remove(downloadId)
-    }
-
-    /**
-     * Checks whether this app is allowed to install unknown packages (Android 8+).
-     */
-    fun canInstall(context: Context): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.packageManager.canRequestPackageInstalls()
-        } else {
-            true
+        runCatching {
+            val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            dm.remove(downloadId)
         }
     }
 
     /**
-     * Opens the system "Install unknown apps" settings page for this app.
-     * Call this when [canInstall] returns false.
+     * Returns true if the app can install unknown packages.
+     */
+    fun canInstall(context: Context): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            context.packageManager.canRequestPackageInstalls()
+        else true
+
+    /**
+     * Opens the "Install unknown apps" settings page for this app.
      */
     fun openInstallPermissionSettings(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                data  = Uri.parse("package:${context.packageName}")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(intent)
+            context.startActivity(
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data  = Uri.parse("package:${context.packageName}")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+            )
         }
     }
 
     /**
-     * Triggers the system package installer for the downloaded APK file.
-     * Uses [FileProvider] for Android 7+ compatibility.
+     * Launches the system package installer for [apkFile].
+     *
+     * On MIUI the FileProvider URI must be granted explicitly — this method
+     * uses FLAG_GRANT_READ_URI_PERMISSION and also queries all possible
+     * installer packages to grant them read access before firing the Intent.
      */
     fun installApk(context: Context, apkFile: File) {
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            apkFile
-        )
+        if (!apkFile.exists()) return
+
+        val uri: Uri = try {
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+        } catch (e: Exception) {
+            // Last-ditch: plain file URI (works on very old devices)
+            Uri.fromFile(apkFile)
+        }
+
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
-            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         }
+
+        // Grant read permission to every app that could handle this intent
+        // (covers MIUI's separate installer package)
+        try {
+            val resolvedActivities = context.packageManager
+                .queryIntentActivities(intent, 0)
+            for (info in resolvedActivities) {
+                context.grantUriPermission(
+                    info.activityInfo.packageName,
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+        } catch (_: Exception) {}
+
         context.startActivity(intent)
     }
 
     /**
-     * Finds the already-downloaded APK in the PUBLIC Downloads dir if it exists.
+     * Finds a previously downloaded APK. Checks app-private dir first,
+     * then public Downloads as fallback.
      */
     fun findDownloadedApk(context: Context, fileName: String): File? {
-        val file = File(
+        val appPrivate = File(
+            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+            fileName
+        )
+        if (appPrivate.exists() && appPrivate.length() > 0) return appPrivate
+
+        val publicDir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
             fileName
         )
-        return if (file.exists()) file else null
+        if (publicDir.exists() && publicDir.length() > 0) return publicDir
+
+        return null
     }
 
     /**
-     * Deletes old update APKs from the public Downloads dir to free space.
+     * Deletes old Aviator APKs to free space.
      */
     fun cleanOldApks(context: Context) {
-        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
             ?.listFiles { f -> f.name.startsWith("AviatorPredictor") && f.name.endsWith(".apk") }
             ?.forEach { it.delete() }
     }

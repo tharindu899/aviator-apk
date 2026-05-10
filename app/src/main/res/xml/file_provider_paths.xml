@@ -1,25 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    FileProvider paths for Aviator Predictor.
+    FileProvider path declarations for Aviator Predictor.
 
-    <external-files-path> → getExternalFilesDir()  (app-private external storage)
-    <external-path>       → Environment.getExternalStorageDirectory()  (public storage)
+    <external-files-path> → Context.getExternalFilesDir()
+        Maps:  /sdcard/Android/data/com.aviator.predictor/files/Downloads/
+        Used by UpdateInstaller.startDownload() (primary strategy)
 
-    DownloadManager.setDestinationInExternalPublicDir(DIRECTORY_DOWNLOADS, …)
-    saves to: /sdcard/Download/<fileName>
-    which maps to <external-path name="public_downloads" path="Download/" />
+    <external-path> → Environment.getExternalStorageDirectory()
+        Maps:  /sdcard/Download/   and   /sdcard/Downloads/
+        Fallback in case DownloadManager resolves to public storage on some ROMs.
 
-    Both entries are kept so any existing cached APKs in the old location
-    can still be served by FileProvider without crashing.
+    Both entries are needed so installApk() can serve whichever path
+    resolveFile() returns without throwing IllegalArgumentException.
 -->
 <paths>
-    <!-- Legacy: app-private external Downloads (kept for backward compat) -->
+    <!-- Primary: app-private external Downloads (no storage permission needed) -->
     <external-files-path
         name="downloads"
         path="Downloads/" />
 
-    <!-- ✅ Active: public Downloads folder used by DownloadManager -->
+    <!-- Fallback A: public Download folder (some DownloadManager implementations) -->
+    <external-path
+        name="public_download"
+        path="Download/" />
+
+    <!-- Fallback B: public Downloads folder (alternate spelling on some devices) -->
     <external-path
         name="public_downloads"
-        path="Download/" />
+        path="Downloads/" />
+
+    <!-- Fallback C: root of external storage (covers any sub-path) -->
+    <external-path
+        name="external_root"
+        path="." />
 </paths>

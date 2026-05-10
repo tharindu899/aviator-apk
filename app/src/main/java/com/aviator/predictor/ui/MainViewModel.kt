@@ -91,7 +91,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 _state.update { it.copy(isAuthLoading = false) }
             }
-            // Always check for updates on launch (after session attempt)
+            // Always check for updates on launch
             checkForUpdate()
         }
     }
@@ -218,6 +218,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (dlState !is UpdateDownloadState.ReadyToInstall) return
         if (!UpdateInstaller.canInstall(context)) {
             UpdateInstaller.openInstallPermissionSettings(context)
+            return
+        }
+        // ✅ Verify the file still exists before trying to install
+        if (!dlState.file.exists()) {
+            _state.update { it.copy(updateDownloadState = UpdateDownloadState.Failed) }
             return
         }
         UpdateInstaller.installApk(context, dlState.file)
