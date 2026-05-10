@@ -15,6 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -24,7 +26,6 @@ import com.aviator.predictor.ui.components.*
 import com.aviator.predictor.ui.theme.*
 import com.aviator.predictor.utils.Formatters
 import com.aviator.predictor.utils.SignalWithWindow
-import com.aviator.predictor.utils.TimeCalculations
 
 @Composable
 fun HomeScreen(
@@ -124,7 +125,7 @@ private fun CurrentSignalCard(
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 32.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    fontFamily = FontFamily.Monospace
                 )
                 val countdownLabel = when (signal.betWindow.status) {
                     BetWindowStatus.WAITING -> "Opens in ${Formatters.formatCountdown(signal.betWindow.windowOpensIn)}"
@@ -138,13 +139,16 @@ private fun CurrentSignalCard(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Progress bar
+        // Progress bar (0 = window opens, 0.5 = result time, 1.0 = window closes)
         val progress = when {
             signal.countdown > 45 -> 0f
             signal.countdown > 0 -> (45f - signal.countdown) / 90f
             signal.countdown >= -45 -> 0.5f + (kotlin.math.abs(signal.countdown) / 90f)
             else -> 1f
         }.coerceIn(0f, 1f)
+
+        // Capture screen width in composable scope (not inside a modifier lambda)
+        val screenWidthDp = LocalConfiguration.current.screenWidthDp
 
         Box(
             modifier = Modifier
@@ -153,6 +157,7 @@ private fun CurrentSignalCard(
                 .clip(RoundedCornerShape(4.dp))
                 .background(Color(0x33FFFFFF))
         ) {
+            // Fill bar
             Box(
                 modifier = Modifier
                     .fillMaxWidth(progress)
@@ -160,11 +165,11 @@ private fun CurrentSignalCard(
                     .clip(RoundedCornerShape(4.dp))
                     .background(Brush.horizontalGradient(listOf(borderColor, borderColor.copy(alpha = 0.7f))))
             )
-            // Centre line
+            // Centre marker line at the result-time midpoint
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .offset(x = (LocalConfiguration().screenWidthDp * 0.5f).dp)
+                    .offset(x = (screenWidthDp * 0.5f - 32).dp) // approx midpoint, adjusted for padding
                     .width(1.dp)
                     .fillMaxHeight()
                     .background(Color.White.copy(alpha = 0.5f))
@@ -182,7 +187,7 @@ private fun CurrentSignalCard(
                 Text(
                     Formatters.formatTime(signal.windowTimes.openTime),
                     color = Color.White, fontSize = 11.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    fontFamily = FontFamily.Monospace
                 )
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -190,7 +195,7 @@ private fun CurrentSignalCard(
                 Text(
                     Formatters.formatTime(signal.signal.resultTime),
                     color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    fontFamily = FontFamily.Monospace
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
@@ -198,7 +203,7 @@ private fun CurrentSignalCard(
                 Text(
                     Formatters.formatTime(signal.windowTimes.closeTime),
                     color = Color.White, fontSize = 11.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    fontFamily = FontFamily.Monospace
                 )
             }
         }
@@ -293,7 +298,7 @@ private fun UpcomingSignalRow(sw: SignalWithWindow) {
                 Text(
                     Formatters.formatTime(sw.signal.resultTime),
                     color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    fontFamily = FontFamily.Monospace
                 )
                 Text("${String.format("%.2f", sw.signal.odd)}x", color = Color(0xFF94A3B8), fontSize = 12.sp)
             }
@@ -323,9 +328,7 @@ private fun EmptySignalsCard(onNavigateGenerate: () -> Unit) {
             Button(
                 onClick = onNavigateGenerate,
                 shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = BrandPurple
-                )
+                colors = ButtonDefaults.buttonColors(containerColor = BrandPurple)
             ) {
                 Icon(Icons.Filled.PlayArrow, null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
@@ -348,7 +351,3 @@ private fun computeStats(signals: List<Signal>): Map<String, Any> {
     val winRate = if (completed > 0) (wins * 100) / completed else 0
     return mapOf("total" to total, "today" to today, "winRate" to winRate)
 }
-
-// Helper to avoid LocalConfiguration crash
-@Composable
-private fun LocalConfiguration() = androidx.compose.ui.platform.LocalConfiguration.current
