@@ -36,11 +36,25 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # ── 4. Gradle wrapper permissions ───────────────────────────────────
+      # ── 4. Bootstrap gradle-wrapper.jar if missing ────────────────────────
+      # The gradle-wrapper.jar must exist before ./gradlew can run.
+      # If it was not committed to the repo, generate it here via system gradle.
+      - name: Bootstrap Gradle Wrapper JAR
+        run: |
+          if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+            echo "gradle-wrapper.jar not found — generating via system gradle..."
+            sudo apt-get install -y gradle 2>/dev/null
+            gradle wrapper --gradle-version 8.7 --distribution-type bin
+            echo "✅ gradle-wrapper.jar generated"
+          else
+            echo "✅ gradle-wrapper.jar already present"
+          fi
+
+      # ── 5. Gradle wrapper permissions ───────────────────────────────────
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      # ── 5. Decode keystore from secret ───────────────────────────────────
+      # ── 6. Decode keystore from secret ───────────────────────────────────
       # Store your keystore as a base64 secret: KEYSTORE_BASE64
       # Generate with: base64 -i your-keystore.jks | tr -d '\n'
       - name: Decode keystore
@@ -48,14 +62,14 @@ jobs:
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > $RUNNER_TEMP/release.jks
           echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> $GITHUB_ENV
 
-      # ── 6. Inject Web Client ID ───────────────────────────────────────────
+      # ── 7. Inject Web Client ID ───────────────────────────────────────────
       # Store your Google Web Client ID as secret: GOOGLE_WEB_CLIENT_ID
       - name: Inject Google Web Client ID
         run: |
           sed -i 's|YOUR_WEB_CLIENT_ID_HERE.apps.googleusercontent.com|${{ secrets.GOOGLE_WEB_CLIENT_ID }}|g' \
             app/build.gradle.kts
 
-      # ── 7. Build release APK ──────────────────────────────────────────────
+      # ── 8. Build release APK ──────────────────────────────────────────────
       - name: Build release APK
         env:
           KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
@@ -64,7 +78,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
-      # ── 8. Locate APK ────────────────────────────────────────────────────
+      # ── 9. Locate APK ────────────────────────────────────────────────────
       - name: Find APK path
         id: find-apk
         run: |
@@ -73,13 +87,13 @@ jobs:
           echo "apk_name=AviatorPredictor-${{ github.ref_name }}.apk" >> $GITHUB_OUTPUT
           echo "Found APK: $APK"
 
-      # ── 9. Rename APK ────────────────────────────────────────────────────
+      # ── 10. Rename APK ────────────────────────────────────────────────────
       - name: Rename APK
         run: |
           cp "${{ steps.find-apk.outputs.apk_path }}" \
              "${{ steps.find-apk.outputs.apk_name }}"
 
-      # ── 10. Upload APK as workflow artifact ───────────────────────────────
+      # ── 11. Upload APK as workflow artifact ───────────────────────────────
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -87,7 +101,7 @@ jobs:
           path: ${{ steps.find-apk.outputs.apk_name }}
           retention-days: 30
 
-      # ── 11. Create GitHub Release (only on tag push) ──────────────────────
+      # ── 12. Create GitHub Release (only on tag push) ──────────────────────
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -124,10 +138,7 @@ jobs:
           draft: false
           prerelease: false
 
-      # ── 12. Upload to Google Drive (optional) ────────────────────────────
-      # This step uses a service account to upload the APK to a shared Drive folder.
-      # Set secret GDRIVE_CREDENTIALS as service account JSON (base64 encoded).
-      # Set secret GDRIVE_FOLDER_ID as your Google Drive folder ID.
+      # ── 13. Upload to Google Drive (optional) ────────────────────────────
       - name: Upload APK to Google Drive
         if: startsWith(github.ref, 'refs/tags/') && env.GDRIVE_CREDENTIALS != ''
         env:
@@ -136,7 +147,6 @@ jobs:
         run: |
           echo "$GDRIVE_CREDENTIALS" | base64 --decode > /tmp/gdrive_creds.json
 
-          # Get access token from service account
           TOKEN=$(python3 -c "
           import json, time, base64, hashlib, hmac
           import urllib.request, urllib.parse
