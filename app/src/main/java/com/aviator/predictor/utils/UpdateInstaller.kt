@@ -37,7 +37,7 @@ object UpdateInstaller {
                 setNotificationVisibility(
                     DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
                 )
-                // ✅ Use PUBLIC Downloads dir — matches <external-path> in file_provider_paths.xml
+                // Use PUBLIC Downloads dir — matches <external-path> in file_provider_paths.xml
                 setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
                 setAllowedNetworkTypes(
                     DownloadManager.Request.NETWORK_WIFI or
@@ -56,10 +56,13 @@ object UpdateInstaller {
     /**
      * Polls [DownloadManager] and emits [DownloadProgress] until the download
      * finishes or fails. Call inside a coroutine / flow.
+     *
+     * Note: [fileName] is required to resolve the file path on completion.
      */
     suspend fun pollProgress(
         context: Context,
         downloadId: Long,
+        fileName: String,
         onProgress: (DownloadProgress) -> Unit
     ) = withContext(Dispatchers.IO) {
         val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
@@ -86,7 +89,6 @@ object UpdateInstaller {
 
             when (status) {
                 DownloadManager.STATUS_SUCCESSFUL -> {
-                    // ✅ Resolve the file from the public Downloads directory
                     val file = resolveDownloadedFile(localUri, fileName)
                     onProgress(DownloadProgress(percent = 100, isComplete = true, localFile = file))
                     break
@@ -111,7 +113,7 @@ object UpdateInstaller {
 
     /**
      * Resolves the downloaded APK [File] from a local URI string.
-     * Falls back to the known public Downloads path if parsing fails.
+     * Falls back to the known public Downloads path if URI parsing fails.
      */
     private fun resolveDownloadedFile(localUri: String?, fileName: String): File? {
         if (localUri != null) {
@@ -185,7 +187,6 @@ object UpdateInstaller {
      * Finds the already-downloaded APK in the PUBLIC Downloads dir if it exists.
      */
     fun findDownloadedApk(context: Context, fileName: String): File? {
-        // ✅ Match the public Downloads dir used in startDownload()
         val file = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
             fileName

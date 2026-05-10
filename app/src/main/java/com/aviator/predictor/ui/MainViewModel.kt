@@ -187,7 +187,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(updateDownloadState = UpdateDownloadState.Downloading(0)) }
 
         downloadJob = viewModelScope.launch {
-            UpdateInstaller.pollProgress(context, downloadId) { progress ->
+            // ✅ Pass info.apkFileName so pollProgress can resolve the file on completion
+            UpdateInstaller.pollProgress(context, downloadId, info.apkFileName) { progress ->
                 when {
                     progress.isFailed -> {
                         _state.update { it.copy(updateDownloadState = UpdateDownloadState.Failed) }
