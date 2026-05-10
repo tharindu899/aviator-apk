@@ -14,7 +14,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 data class DownloadProgress(
-    val percent: Int        = 0,    // 0-100
+    val percent: Int        = 0,
     val isComplete: Boolean = false,
     val isFailed: Boolean   = false,
     val localFile: File?    = null
@@ -24,6 +24,7 @@ object UpdateInstaller {
 
     /**
      * Enqueues the APK download via [DownloadManager].
+     * Saves to the PUBLIC Downloads folder so FileProvider can serve it.
      * Returns the download ID, or -1L on failure.
      */
     fun startDownload(context: Context, downloadUrl: String, fileName: String): Long {
@@ -36,11 +37,8 @@ object UpdateInstaller {
                 setNotificationVisibility(
                     DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
                 )
-                setDestinationInExternalFilesDir(
-                    context,
-                    Environment.DIRECTORY_DOWNLOADS,
-                    fileName
-                )
+                // ✅ Use PUBLIC Downloads dir — matches <external-path> in file_provider_paths.xml
+                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
                 setAllowedNetworkTypes(
                     DownloadManager.Request.NETWORK_WIFI or
                     DownloadManager.Request.NETWORK_MOBILE
@@ -57,7 +55,7 @@ object UpdateInstaller {
 
     /**
      * Polls [DownloadManager] and emits [DownloadProgress] until the download
-     * finishes or fails.  Call inside a coroutine / flow.
+     * finishes or fails. Call inside a coroutine / flow.
      */
     suspend fun pollProgress(
         context: Context,
@@ -75,10 +73,10 @@ object UpdateInstaller {
                 break
             }
 
-            val statusCol    = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
-            val totalCol     = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+            val statusCol     = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+            val totalCol      = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
             val downloadedCol = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
-            val localUriCol  = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
+            val localUriCol   = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
 
             val status     = cursor.getInt(statusCol)
             val total      = cursor.getLong(totalCol)
@@ -88,7 +86,8 @@ object UpdateInstaller {
 
             when (status) {
                 DownloadManager.STATUS_SUCCESSFUL -> {
-                    val file = localUri?.let { File(Uri.parse(it).path ?: "") }
+                    // ✅ Resolve the file from the public Downloads directory
+                    val file = resolveDownloadedFile(localUri, fileName)
                     onProgress(DownloadProgress(percent = 100, isComplete = true, localFile = file))
                     break
                 }
@@ -108,6 +107,28 @@ object UpdateInstaller {
 
             delay(600)
         }
+    }
+
+    /**
+     * Resolves the downloaded APK [File] from a local URI string.
+     * Falls back to the known public Downloads path if parsing fails.
+     */
+    private fun resolveDownloadedFile(localUri: String?, fileName: String): File? {
+        if (localUri != null) {
+            try {
+                val path = Uri.parse(localUri).path
+                if (path != null) {
+                    val f = File(path)
+                    if (f.exists()) return f
+                }
+            } catch (_: Exception) {}
+        }
+        // Fallback: reconstruct from known destination
+        val fallback = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            fileName
+        )
+        return if (fallback.exists()) fallback else null
     }
 
     /**
@@ -161,22 +182,23 @@ object UpdateInstaller {
     }
 
     /**
-     * Finds the already-downloaded APK in external files dir if it exists.
+     * Finds the already-downloaded APK in the PUBLIC Downloads dir if it exists.
      */
     fun findDownloadedApk(context: Context, fileName: String): File? {
+        // ✅ Match the public Downloads dir used in startDownload()
         val file = File(
-            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
             fileName
         )
         return if (file.exists()) file else null
     }
 
     /**
-     * Deletes old update APKs from external files dir to free space.
+     * Deletes old update APKs from the public Downloads dir to free space.
      */
     fun cleanOldApks(context: Context) {
-        context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-            ?.listFiles { f -> f.name.endsWith(".apk") }
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            ?.listFiles { f -> f.name.startsWith("AviatorPredictor") && f.name.endsWith(".apk") }
             ?.forEach { it.delete() }
     }
 }

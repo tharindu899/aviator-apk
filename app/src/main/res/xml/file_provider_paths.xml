@@ -1,11 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Exposes files inside getExternalFilesDir(DIRECTORY_DOWNLOADS) to the
-    system package installer via FileProvider.
-    Path must match UpdateInstaller.startDownload() → setDestinationInExternalFilesDir(…, DIRECTORY_DOWNLOADS, …)
+    FileProvider paths for Aviator Predictor.
+
+    <external-files-path> → getExternalFilesDir()  (app-private external storage)
+    <external-path>       → Environment.getExternalStorageDirectory()  (public storage)
+
+    DownloadManager.setDestinationInExternalPublicDir(DIRECTORY_DOWNLOADS, …)
+    saves to: /sdcard/Download/<fileName>
+    which maps to <external-path name="public_downloads" path="Download/" />
+
+    Both entries are kept so any existing cached APKs in the old location
+    can still be served by FileProvider without crashing.
 -->
 <paths>
+    <!-- Legacy: app-private external Downloads (kept for backward compat) -->
     <external-files-path
         name="downloads"
         path="Downloads/" />
+
+    <!-- ✅ Active: public Downloads folder used by DownloadManager -->
+    <external-path
+        name="public_downloads"
+        path="Download/" />
 </paths>

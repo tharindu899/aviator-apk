@@ -1,11 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Network -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- Required to install downloaded APKs on Android 8+ -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!--
+        Storage permissions for DownloadManager writing to public Downloads.
+        WRITE_EXTERNAL_STORAGE is only needed on API 28 and below.
+        READ_EXTERNAL_STORAGE is needed on API 32 and below to read back the file.
+        On API 29+ scoped storage allows reading files your app wrote without READ permission,
+        but the explicit declaration is kept for maximum device compatibility.
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
 
     <application
         android:allowBackup="true"
@@ -38,7 +56,10 @@
             </intent-filter>
         </receiver>
 
-        <!-- FileProvider — exposes the downloaded APK to the system installer -->
+        <!--
+            FileProvider — exposes the downloaded APK to the system installer.
+            authorities must match the string used in UpdateInstaller.installApk()
+        -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
