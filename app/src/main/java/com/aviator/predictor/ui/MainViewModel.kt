@@ -8,20 +8,26 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.aviator.predictor.BuildConfig
 import com.aviator.predictor.data.models.*
 import com.aviator.predictor.data.repository.AuthRepository
 import com.aviator.predictor.data.repository.DriveRepository
-import com.aviator.predictor.utils.NotificationHelper
-import com.aviator.predictor.utils.PendingSignalAction
-import com.aviator.predictor.utils.SignalWithWindow
-import com.aviator.predictor.utils.TimeCalculations
+import com.aviator.predictor.utils.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import java.io.File
 import java.util.*
 
 // ── UI State ──────────────────────────────────────────────────────────────────
 
 enum class SyncStatus { PENDING, SYNCING, SYNCED, OFFLINE, ERROR }
+
+sealed class UpdateDownloadState {
+    object Idle                                : UpdateDownloadState()
+    data class Downloading(val percent: Int)   : UpdateDownloadState()
+    data class ReadyToInstall(val file: File)  : UpdateDownloadState()
+    object Failed                              : UpdateDownloadState()
+}
 
 data class AppUiState(
     val isAuthLoading: Boolean = true,
@@ -35,7 +41,11 @@ data class AppUiState(
     val syncStatus: SyncStatus = SyncStatus.PENDING,
     val error: String? = null,
     val upcomingSignals: List<SignalWithWindow> = emptyList(),
-    val currentSignal: SignalWithWindow? = null
+    val currentSignal: SignalWithWindow? = null,
+    // ── Update ──────────────────────────────────────────────
+    val updateInfo: UpdateInfo? = null,
+    val showUpdateDialog: Boolean = false,
+    val updateDownloadState: UpdateDownloadState = UpdateDownloadState.Idle
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -49,6 +59,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var countdownJob: Job? = null
     private var syncJob: Job? = null
     private var autoMarkJob: Job? = null
+    private var downloadJob: Job? = null
+    private var activeDownloadId: Long = -1L
 
     private val notifiedSignalIds = mutableSetOf<String>()
 
@@ -59,7 +71,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         tryRestoreSession()
     }
 
-    // ── Silent session restore ────────────────────────────────────────────
+    // ── Session restore ───────────────────────────────────────────────────
 
     private fun tryRestoreSession() {
         viewModelScope.launch {
@@ -79,6 +91,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 _state.update { it.copy(isAuthLoading = false) }
             }
+            // Always check for updates on launch (after session attempt)
+            checkForUpdate()
         }
     }
 
@@ -112,10 +126,109 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             driveRepo.clearCache()
             countdownJob?.cancel()
             syncJob?.cancel()
+            cancelDownloadIfActive()
             NotificationHelper.cancelAll(getApplication())
             notifiedSignalIds.clear()
             _state.value = AppUiState(isAuthLoading = false)
         }
+    }
+
+    // ── Update check ──────────────────────────────────────────────────────
+
+    fun checkForUpdate() {
+        viewModelScope.launch {
+            val info = UpdateChecker.checkForUpdate(BuildConfig.VERSION_NAME) ?: return@launch
+            _state.update {
+                it.copy(
+                    updateInfo       = info,
+                    showUpdateDialog = true
+                )
+            }
+        }
+    }
+
+    fun showUpdateDialog()  = _state.update { it.copy(showUpdateDialog = true) }
+
+    fun dismissUpdateDialog() {
+        if (_state.value.updateDownloadState is UpdateDownloadState.Downloading) return
+        _state.update { it.copy(showUpdateDialog = false) }
+    }
+
+    // ── Download ──────────────────────────────────────────────────────────
+
+    fun startUpdateDownload() {
+        val info    = _state.value.updateInfo ?: return
+        val context = getApplication<Application>()
+
+        // Reuse cached APK if already downloaded
+        val existing = UpdateInstaller.findDownloadedApk(context, info.apkFileName)
+        if (existing != null) {
+            _state.update {
+                it.copy(updateDownloadState = UpdateDownloadState.ReadyToInstall(existing))
+            }
+            return
+        }
+
+        // Check "install unknown apps" permission
+        if (!UpdateInstaller.canInstall(context)) {
+            UpdateInstaller.openInstallPermissionSettings(context)
+            return
+        }
+
+        cancelDownloadIfActive()
+
+        val downloadId = UpdateInstaller.startDownload(context, info.downloadUrl, info.apkFileName)
+        if (downloadId == -1L) {
+            _state.update { it.copy(updateDownloadState = UpdateDownloadState.Failed) }
+            return
+        }
+
+        activeDownloadId = downloadId
+        _state.update { it.copy(updateDownloadState = UpdateDownloadState.Downloading(0)) }
+
+        downloadJob = viewModelScope.launch {
+            UpdateInstaller.pollProgress(context, downloadId) { progress ->
+                when {
+                    progress.isFailed -> {
+                        _state.update { it.copy(updateDownloadState = UpdateDownloadState.Failed) }
+                    }
+                    progress.isComplete && progress.localFile != null -> {
+                        _state.update {
+                            it.copy(
+                                updateDownloadState = UpdateDownloadState.ReadyToInstall(progress.localFile)
+                            )
+                        }
+                    }
+                    else -> {
+                        _state.update {
+                            it.copy(updateDownloadState = UpdateDownloadState.Downloading(progress.percent))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Install ───────────────────────────────────────────────────────────
+
+    fun installUpdate() {
+        val dlState = _state.value.updateDownloadState
+        val context = getApplication<Application>()
+        if (dlState !is UpdateDownloadState.ReadyToInstall) return
+        if (!UpdateInstaller.canInstall(context)) {
+            UpdateInstaller.openInstallPermissionSettings(context)
+            return
+        }
+        UpdateInstaller.installApk(context, dlState.file)
+    }
+
+    private fun cancelDownloadIfActive() {
+        if (activeDownloadId != -1L) {
+            UpdateInstaller.cancelDownload(getApplication(), activeDownloadId)
+            activeDownloadId = -1L
+        }
+        downloadJob?.cancel()
+        downloadJob = null
     }
 
     // ── Data loading ──────────────────────────────────────────────────────
@@ -155,8 +268,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { loadAllData(token) }
     }
 
-    // ── 1-second countdown updater ────────────────────────────────────────
-
     private fun startCountdownUpdater() {
         countdownJob?.cancel()
         countdownJob = viewModelScope.launch {
@@ -166,16 +277,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (!current.isSignedIn || current.signals.isEmpty()) continue
                 val computed = computeUpcoming(current.signals)
                 _state.update {
-                    it.copy(
-                        upcomingSignals = computed.first,
-                        currentSignal   = computed.second
-                    )
+                    it.copy(upcomingSignals = computed.first, currentSignal = computed.second)
                 }
             }
         }
     }
-
-    // ── 30-second Drive sync ──────────────────────────────────────────────
 
     private fun startPeriodicSync() {
         syncJob?.cancel()
@@ -188,12 +294,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val signals  = driveRepo.loadSignals(token)
                     val computed = computeUpcoming(signals)
                     _state.update {
-                        it.copy(
-                            signals         = signals,
-                            syncStatus      = SyncStatus.SYNCED,
-                            upcomingSignals = computed.first,
-                            currentSignal   = computed.second
-                        )
+                        it.copy(signals = signals, syncStatus = SyncStatus.SYNCED,
+                            upcomingSignals = computed.first, currentSignal = computed.second)
                     }
                 } catch (_: Exception) {
                     _state.update { it.copy(syncStatus = SyncStatus.OFFLINE) }
@@ -201,8 +303,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-
-    // ── Notification action collection ────────────────────────────────────
 
     private fun collectPendingActions() {
         viewModelScope.launch {
@@ -212,139 +312,83 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Notification management ───────────────────────────────────────────
-
     private fun hasNotificationPermission(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
         return ContextCompat.checkSelfPermission(
-            getApplication(),
-            Manifest.permission.POST_NOTIFICATIONS
+            getApplication(), Manifest.permission.POST_NOTIFICATIONS
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    /**
-     * Syncs notification state with current signals.
-     * Respects [settings.notifications] — if disabled, cancels all active
-     * notifications and skips posting new ones.
-     */
     private fun syncNotifications(signals: List<Signal>, settings: AppSettings) {
-        // If notifications are disabled, cancel anything still showing and bail
         if (!settings.notifications) {
             if (notifiedSignalIds.isNotEmpty()) {
-                val context = getApplication<Application>()
-                notifiedSignalIds.forEach { NotificationHelper.cancelNotification(context, it) }
+                val ctx = getApplication<Application>()
+                notifiedSignalIds.forEach { NotificationHelper.cancelNotification(ctx, it) }
                 notifiedSignalIds.clear()
             }
             return
         }
-
         if (!hasNotificationPermission()) return
         val context = getApplication<Application>()
-
         signals.forEach { signal ->
             if (signal.status != SignalStatus.PENDING) {
-                if (notifiedSignalIds.remove(signal.id)) {
+                if (notifiedSignalIds.remove(signal.id))
                     NotificationHelper.cancelNotification(context, signal.id)
-                }
                 return@forEach
             }
-
             val countdown    = TimeCalculations.getCountdown(signal)
             val inWindow     = countdown <= 45 && countdown >= -45
             val windowClosed = countdown < -45
-
             when {
                 inWindow -> {
-                    val isFirstShow = !notifiedSignalIds.contains(signal.id)
-                    // Respect the sound setting: only play sound if both "first show"
-                    // AND the sound setting is enabled
-                    val playSound   = isFirstShow && settings.sound
-                    val betWindow   = TimeCalculations.getBetWindowStatus(countdown)
-                    NotificationHelper.showActiveNotification(
-                        context      = context,
-                        signal       = signal,
-                        windowStatus = betWindow.status,
-                        countdown    = countdown,
-                        playSound    = playSound
-                    )
+                    val isFirst   = !notifiedSignalIds.contains(signal.id)
+                    val playSound = isFirst && settings.sound
+                    val betWindow = TimeCalculations.getBetWindowStatus(countdown)
+                    NotificationHelper.showActiveNotification(context, signal, betWindow.status, countdown, playSound)
                     notifiedSignalIds.add(signal.id)
                 }
-                windowClosed && notifiedSignalIds.remove(signal.id) -> {
+                windowClosed && notifiedSignalIds.remove(signal.id) ->
                     NotificationHelper.cancelNotification(context, signal.id)
-                }
             }
         }
     }
 
-    // ── Signal generation ─────────────────────────────────────────────────
-
     fun generateSignal(input: String, onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             val parsed = TimeCalculations.parseInput(input)
-            if (parsed == null) {
-                onResult(false, "Invalid format! Use: 2.02x 21:31:22")
-                return@launch
-            }
-
+            if (parsed == null) { onResult(false, "Invalid format! Use: 2.02x 21:31:22"); return@launch }
             _state.update { it.copy(isGenerating = true) }
-
             val addTime      = TimeCalculations.oddToTime(parsed.odd)
             val originalSecs = parsed.hour * 3600 + parsed.minute * 60 + parsed.second
             val addSecs      = addTime.hours * 3600 + addTime.minutes * 60 + addTime.seconds
             var totalSecs    = originalSecs + addSecs
             val daysOffset   = totalSecs / 86400
             totalSecs       %= 86400
-
-            val resultTime = TimeObj(
-                hours   = totalSecs / 3600,
-                minutes = (totalSecs % 3600) / 60,
-                seconds = totalSecs % 60
-            )
-
-            val resultDate = Calendar.getInstance().apply {
-                add(Calendar.DAY_OF_YEAR, daysOffset)
-            }.let {
+            val resultTime   = TimeObj(totalSecs / 3600, (totalSecs % 3600) / 60, totalSecs % 60)
+            val resultDate   = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, daysOffset) }.let {
                 java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
-                    .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
-                    .format(it.time)
+                    .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(it.time)
             }
-
-            val exists = _state.value.signals.any { sig ->
-                sig.status == SignalStatus.PENDING && sig.resultTime == resultTime
-            }
-            if (exists) {
+            if (_state.value.signals.any { it.status == SignalStatus.PENDING && it.resultTime == resultTime }) {
                 _state.update { it.copy(isGenerating = false) }
-                onResult(false, "This signal already exists!")
-                return@launch
+                onResult(false, "This signal already exists!"); return@launch
             }
-
             val windowTimes = TimeCalculations.getBetWindowTimes(resultTime)
             val newSignal = Signal(
-                id           = driveRepo.newSignalId(),
-                odd          = parsed.odd,
+                id           = driveRepo.newSignalId(), odd = parsed.odd,
                 originalTime = TimeObj(parsed.hour, parsed.minute, parsed.second),
-                resultTime   = resultTime,
-                resultDate   = resultDate,
-                daysOffset   = daysOffset,
+                resultTime   = resultTime, resultDate = resultDate, daysOffset = daysOffset,
                 status       = SignalStatus.PENDING,
-                createdAt    = System.currentTimeMillis(),
-                updatedAt    = System.currentTimeMillis(),
+                createdAt    = System.currentTimeMillis(), updatedAt = System.currentTimeMillis(),
                 windowTimes  = windowTimes
             )
-
             val token = _state.value.accessToken
-            val ok    = driveRepo.addSignal(token, newSignal)
-
-            if (ok) {
+            if (driveRepo.addSignal(token, newSignal)) {
                 val newSignals = listOf(newSignal) + _state.value.signals
                 val computed   = computeUpcoming(newSignals)
                 _state.update {
-                    it.copy(
-                        signals         = newSignals,
-                        isGenerating    = false,
-                        upcomingSignals = computed.first,
-                        currentSignal   = computed.second
-                    )
+                    it.copy(signals = newSignals, isGenerating = false,
+                        upcomingSignals = computed.first, currentSignal = computed.second)
                 }
                 onResult(true, "Signal generated!")
             } else {
@@ -354,30 +398,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Signal actions ────────────────────────────────────────────────────
-
     fun updateSignalStatus(signalId: String, status: SignalStatus) {
         viewModelScope.launch {
             val token   = _state.value.accessToken
             val updated = _state.value.signals.map {
-                if (it.id == signalId)
-                    it.copy(status = status, updatedAt = System.currentTimeMillis())
-                else it
+                if (it.id == signalId) it.copy(status = status, updatedAt = System.currentTimeMillis()) else it
             }
             val computed = computeUpcoming(updated)
             _state.update {
-                it.copy(
-                    signals         = updated,
-                    upcomingSignals = computed.first,
-                    currentSignal   = computed.second
-                )
+                it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second)
             }
-            if (notifiedSignalIds.remove(signalId)) {
+            if (notifiedSignalIds.remove(signalId))
                 NotificationHelper.cancelNotification(getApplication(), signalId)
-            }
-            if (token.isNotBlank()) {
+            if (token.isNotBlank())
                 launch { runCatching { driveRepo.updateSignalStatus(token, signalId, status) } }
-            }
         }
     }
 
@@ -387,30 +421,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val updated  = _state.value.signals.filter { it.id != signalId }
             val computed = computeUpcoming(updated)
             _state.update {
-                it.copy(
-                    signals         = updated,
-                    upcomingSignals = computed.first,
-                    currentSignal   = computed.second
-                )
+                it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second)
             }
-            if (notifiedSignalIds.remove(signalId)) {
+            if (notifiedSignalIds.remove(signalId))
                 NotificationHelper.cancelNotification(getApplication(), signalId)
-            }
-            if (token.isNotBlank()) {
+            if (token.isNotBlank())
                 launch { runCatching { driveRepo.deleteSignal(token, signalId) } }
-            }
         }
     }
-
-    // ── Settings / Profile ────────────────────────────────────────────────
 
     fun saveSettings(settings: AppSettings) {
         viewModelScope.launch {
             _state.update { it.copy(settings = settings) }
             val token = _state.value.accessToken
-            if (token.isNotBlank()) {
-                launch { runCatching { driveRepo.saveSettings(token, settings) } }
-            }
+            if (token.isNotBlank()) launch { runCatching { driveRepo.saveSettings(token, settings) } }
         }
     }
 
@@ -419,13 +443,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(user = profile) }
             launch { runCatching { authRepo.saveSession(profile) } }
             val token = _state.value.accessToken
-            if (token.isNotBlank()) {
-                launch { runCatching { driveRepo.saveProfile(token, profile) } }
-            }
+            if (token.isNotBlank()) launch { runCatching { driveRepo.saveProfile(token, profile) } }
         }
     }
-
-    // ── Auto-mark missed + notification sync (runs every 3 s) ────────────
 
     private fun startAutoMarkMissed() {
         autoMarkJob?.cancel()
@@ -434,51 +454,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 delay(3_000)
                 val current = _state.value
                 if (!current.isSignedIn || current.accessToken.isBlank()) continue
-
-                // Always sync notifications (syncNotifications checks the setting internally)
                 syncNotifications(current.signals, current.settings)
-
-                // Respect the autoMarkMissed setting before doing any DB writes
                 if (!current.settings.autoMarkMissed) continue
-
                 val toMark = current.signals.filter { TimeCalculations.shouldMarkAsMissed(it) }
                 if (toMark.isEmpty()) continue
-
                 val updates = toMark.associate { it.id to SignalStatus.MISSED }
                 val updated = current.signals.map { sig ->
                     if (updates.containsKey(sig.id))
-                        sig.copy(
-                            status     = SignalStatus.MISSED,
-                            updatedAt  = System.currentTimeMillis(),
-                            autoMarked = true
-                        )
+                        sig.copy(status = SignalStatus.MISSED, updatedAt = System.currentTimeMillis(), autoMarked = true)
                     else sig
                 }
                 val computed = computeUpcoming(updated)
                 _state.update {
-                    it.copy(
-                        signals         = updated,
-                        upcomingSignals = computed.first,
-                        currentSignal   = computed.second
-                    )
+                    it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second)
                 }
                 toMark.forEach { sig ->
-                    if (notifiedSignalIds.remove(sig.id)) {
+                    if (notifiedSignalIds.remove(sig.id))
                         NotificationHelper.cancelNotification(getApplication(), sig.id)
-                    }
                 }
-                launch {
-                    runCatching { driveRepo.batchUpdateStatus(current.accessToken, updates) }
-                }
+                launch { runCatching { driveRepo.batchUpdateStatus(current.accessToken, updates) } }
             }
         }
     }
 
-    // ── Stats ─────────────────────────────────────────────────────────────
-
     fun getStats(): Stats {
         val signals    = _state.value.signals
-        val total      = signals.size
         val todayStart = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0);      set(Calendar.MILLISECOND, 0)
@@ -490,15 +490,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val pending   = signals.count { it.status == SignalStatus.PENDING }
         val completed = wins + losses
         val winRate   = if (completed > 0) (wins * 100) / completed else 0
-        return Stats(total, today, wins, losses, missed, pending, winRate, completed)
+        return Stats(signals.size, today, wins, losses, missed, pending, winRate, completed)
     }
-
-    // ── Helpers ───────────────────────────────────────────────────────────
 
     private fun computeUpcoming(signals: List<Signal>): Pair<List<SignalWithWindow>, SignalWithWindow?> {
         val upcoming = TimeCalculations.getUpcomingSignals(signals)
-        val current  = TimeCalculations.getCurrentSignal(upcoming)
-        return Pair(upcoming, current)
+        return Pair(upcoming, TimeCalculations.getCurrentSignal(upcoming))
     }
 
     fun clearError() = _state.update { it.copy(error = null) }

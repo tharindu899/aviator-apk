@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Exposes files inside getExternalFilesDir(DIRECTORY_DOWNLOADS) to the
+    system package installer via FileProvider.
+    Path must match UpdateInstaller.startDownload() → setDestinationInExternalFilesDir(…, DIRECTORY_DOWNLOADS, …)
+-->
+<paths>
+    <external-files-path
+        name="downloads"
+        path="Downloads/" />
+</paths>

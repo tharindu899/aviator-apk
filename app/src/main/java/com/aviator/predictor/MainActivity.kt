@@ -13,6 +13,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,6 +30,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aviator.predictor.data.models.SignalStatus
@@ -40,15 +43,33 @@ import com.aviator.predictor.utils.Formatters
 import java.text.SimpleDateFormat
 import java.util.*
 
+// ── Update models ─────────────────────────────────────────────────────────────
+
+data class UpdateInfo(
+    val latestVersion: String,
+    val downloadUrl: String,
+    val releaseNotes: String = ""
+)
+
+sealed class UpdateDownloadState {
+    object Idle : UpdateDownloadState()
+    data class Downloading(val progress: Int) : UpdateDownloadState()
+    object ReadyToInstall : UpdateDownloadState()
+    data class Failed(val message: String) : UpdateDownloadState()
+}
+
+// ── Screens ───────────────────────────────────────────────────────────────────
+
 enum class Screen { HOME, GENERATE, RESULTS, PROFILE }
+
+// ── Activity ──────────────────────────────────────────────────────────────────
 
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
 
-    // Notification permission launcher (Android 13+)
     private val notificationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* granted or denied, no-op */ }
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
@@ -59,7 +80,6 @@ class MainActivity : ComponentActivity() {
             viewModel.state.value.isAuthLoading
         }
 
-        // Request POST_NOTIFICATIONS on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -70,23 +90,29 @@ class MainActivity : ComponentActivity() {
                 val activity = LocalContext.current as ComponentActivity
 
                 AviatorApp(
-                    state          = state,
-                    onSignIn       = { viewModel.signIn(activity) },
-                    onSignOut      = { viewModel.signOut() },
-                    onGenerate     = { input, cb -> viewModel.generateSignal(input, cb) },
-                    onMarkWin      = { id -> viewModel.updateSignalStatus(id, SignalStatus.WIN) },
-                    onMarkLoss     = { id -> viewModel.updateSignalStatus(id, SignalStatus.LOSS) },
-                    onReset        = { id -> viewModel.updateSignalStatus(id, SignalStatus.PENDING) },
-                    onDelete       = { id -> viewModel.deleteSignal(id) },
-                    onSaveProfile  = { profile -> viewModel.saveProfile(profile) },
-                    onSaveSettings = { settings -> viewModel.saveSettings(settings) },
-                    onRetrySync    = { viewModel.retrySync() },
-                    getStats       = { viewModel.getStats() }
+                    state              = state,
+                    onSignIn           = { viewModel.signIn(activity) },
+                    onSignOut          = { viewModel.signOut() },
+                    onGenerate         = { input, cb -> viewModel.generateSignal(input, cb) },
+                    onMarkWin          = { id -> viewModel.updateSignalStatus(id, SignalStatus.WIN) },
+                    onMarkLoss         = { id -> viewModel.updateSignalStatus(id, SignalStatus.LOSS) },
+                    onReset            = { id -> viewModel.updateSignalStatus(id, SignalStatus.PENDING) },
+                    onDelete           = { id -> viewModel.deleteSignal(id) },
+                    onSaveProfile      = { profile -> viewModel.saveProfile(profile) },
+                    onSaveSettings     = { settings -> viewModel.saveSettings(settings) },
+                    onRetrySync        = { viewModel.retrySync() },
+                    getStats           = { viewModel.getStats() },
+                    onShowUpdateDialog = { viewModel.showUpdateDialog() },
+                    onDismissUpdate    = { viewModel.dismissUpdateDialog() },
+                    onDownloadUpdate   = { viewModel.startUpdateDownload() },
+                    onInstallUpdate    = { viewModel.installUpdate() }
                 )
             }
         }
     }
 }
+
+// ── Root composable ───────────────────────────────────────────────────────────
 
 @Composable
 fun AviatorApp(
@@ -101,7 +127,12 @@ fun AviatorApp(
     onSaveProfile: (com.aviator.predictor.data.models.UserProfile) -> Unit,
     onSaveSettings: (com.aviator.predictor.data.models.AppSettings) -> Unit,
     onRetrySync: () -> Unit,
-    getStats: () -> com.aviator.predictor.data.models.Stats
+    getStats: () -> com.aviator.predictor.data.models.Stats,
+    // ── update callbacks ──────────────────────────────────────────────────
+    onShowUpdateDialog: () -> Unit,
+    onDismissUpdate: () -> Unit,
+    onDownloadUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit
 ) {
     if (state.isAuthLoading) {
         Box(
@@ -152,7 +183,6 @@ fun AviatorApp(
         }
     }
 
-    // Win/Loss bar in bottom nav — show when a signal is in its active/grace window
     val showWinLossBar by remember(state.upcomingSignals) {
         derivedStateOf {
             state.upcomingSignals.any { sw ->
@@ -166,57 +196,335 @@ fun AviatorApp(
         sw.countdown <= 45 && sw.countdown >= -55
     }
 
-    Scaffold(
-        containerColor = SlateBackground,
-        topBar = {
-            AppTopBar(
-                state       = state,
-                currentTime = currentTime,
-                onRetrySync = onRetrySync
-            )
-        },
-        bottomBar = {
-            AppBottomBar(
-                currentScreen   = currentScreen,
-                onScreenChange  = { currentScreen = it },
-                showWinLossBar  = showWinLossBar && currentScreen != Screen.GENERATE,
-                winLossSignalId = winLossSignal?.signal?.id,
-                nextSignal      = state.upcomingSignals.firstOrNull(),
-                syncStatus      = state.syncStatus,
-                onMarkWin       = onMarkWin,
-                onMarkLoss      = onMarkLoss
+    // ── Root Box: Scaffold + floating update dialog ───────────────────────
+    Box(modifier = Modifier.fillMaxSize()) {
+
+        Scaffold(
+            containerColor = SlateBackground,
+            topBar = {
+                Column {
+                    // Update banner: shown when an update is available but the
+                    // dialog has been dismissed and the APK isn't ready to install yet
+                    if (state.updateInfo != null &&
+                        !state.showUpdateDialog &&
+                        state.updateDownloadState !is UpdateDownloadState.ReadyToInstall
+                    ) {
+                        UpdateBanner(
+                            latestVersion = state.updateInfo.latestVersion,
+                            onClick       = onShowUpdateDialog
+                        )
+                    }
+                    AppTopBar(
+                        state       = state,
+                        currentTime = currentTime,
+                        onRetrySync = onRetrySync
+                    )
+                }
+            },
+            bottomBar = {
+                AppBottomBar(
+                    currentScreen   = currentScreen,
+                    onScreenChange  = { currentScreen = it },
+                    showWinLossBar  = showWinLossBar && currentScreen != Screen.GENERATE,
+                    winLossSignalId = winLossSignal?.signal?.id,
+                    nextSignal      = state.upcomingSignals.firstOrNull(),
+                    syncStatus      = state.syncStatus,
+                    onMarkWin       = onMarkWin,
+                    onMarkLoss      = onMarkLoss
+                )
+            }
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
+                when (currentScreen) {
+                    Screen.HOME -> HomeScreen(
+                        state              = state,
+                        onNavigateGenerate = { currentScreen = Screen.GENERATE }
+                    )
+                    Screen.GENERATE -> GenerateScreen(
+                        isGenerating = state.isGenerating,
+                        onGenerate   = onGenerate
+                    )
+                    Screen.RESULTS -> ResultsScreen(
+                        signals    = state.signals,
+                        onMarkWin  = onMarkWin,
+                        onMarkLoss = onMarkLoss,
+                        onReset    = onReset,
+                        onDelete   = onDelete
+                    )
+                    Screen.PROFILE -> ProfileScreen(
+                        state          = state,
+                        onSaveProfile  = onSaveProfile,
+                        onSaveSettings = onSaveSettings,
+                        onSignOut      = onSignOut
+                    )
+                }
+            }
+        }
+
+        // ── Update dialog (floats above everything) ───────────────────────
+        if (state.showUpdateDialog && state.updateInfo != null) {
+            UpdateDialog(
+                updateInfo    = state.updateInfo,
+                downloadState = state.updateDownloadState,
+                onDownload    = onDownloadUpdate,
+                onInstall     = onInstallUpdate,
+                onDismiss     = onDismissUpdate
             )
         }
-    ) { padding ->
+    }
+}
+
+// ── Update Banner ─────────────────────────────────────────────────────────────
+
+@Composable
+fun UpdateBanner(
+    latestVersion: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BrandPurple.copy(alpha = 0.15f))
+            .border(
+                width  = 0.dp,
+                color  = Color.Transparent,
+                shape  = RoundedCornerShape(0.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment     = Alignment.CenterVertically
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment     = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Filled.SystemUpdateAlt,
+                contentDescription = null,
+                tint     = BrandPurple,
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                "Update available — v$latestVersion",
+                color      = BrandPurple,
+                fontSize   = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        Text(
+            "View",
+            color      = BrandPurple,
+            fontSize   = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+// ── Update Dialog ─────────────────────────────────────────────────────────────
+
+@Composable
+fun UpdateDialog(
+    updateInfo: UpdateInfo,
+    downloadState: UpdateDownloadState,
+    onDownload: () -> Unit,
+    onInstall: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
+                .fillMaxWidth()
+                .padding(24.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(SlateSurface)
+                .border(1.dp, BrandPurple.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
+                .padding(24.dp)
         ) {
-            when (currentScreen) {
-                // HomeScreen no longer receives onMarkWin / onMarkLoss —
-                // those actions are handled via notification or the bottom bar.
-                Screen.HOME -> HomeScreen(
-                    state              = state,
-                    onNavigateGenerate = { currentScreen = Screen.GENERATE }
-                )
-                Screen.GENERATE -> GenerateScreen(
-                    isGenerating = state.isGenerating,
-                    onGenerate   = onGenerate
-                )
-                Screen.RESULTS -> ResultsScreen(
-                    signals    = state.signals,
-                    onMarkWin  = onMarkWin,
-                    onMarkLoss = onMarkLoss,
-                    onReset    = onReset,
-                    onDelete   = onDelete
-                )
-                Screen.PROFILE -> ProfileScreen(
-                    state          = state,
-                    onSaveProfile  = onSaveProfile,
-                    onSaveSettings = onSaveSettings,
-                    onSignOut      = onSignOut
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+
+                // Title row
+                Row(
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment     = Alignment.CenterVertically
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment     = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Brush.linearGradient(listOf(BrandPurple, BrandPink))),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Filled.SystemUpdateAlt,
+                                contentDescription = null,
+                                tint     = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                "Update Available",
+                                color      = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize   = 16.sp
+                            )
+                            Text(
+                                "v${updateInfo.latestVersion}",
+                                color    = BrandPurple,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Filled.Close, null, tint = Color(0xFF94A3B8))
+                    }
+                }
+
+                // Release notes
+                if (updateInfo.releaseNotes.isNotBlank()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0x22334155))
+                            .padding(12.dp)
+                    ) {
+                        Text(
+                            updateInfo.releaseNotes,
+                            color    = Color(0xFFCBD5E1),
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+
+                // Download progress
+                when (downloadState) {
+                    is UpdateDownloadState.Downloading -> {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier              = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "Downloading…",
+                                    color    = Color(0xFF94A3B8),
+                                    fontSize = 12.sp
+                                )
+                                Text(
+                                    "${downloadState.progress}%",
+                                    color      = BrandPurple,
+                                    fontSize   = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            LinearProgressIndicator(
+                                progress    = { downloadState.progress / 100f },
+                                modifier    = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                                color            = BrandPurple,
+                                trackColor       = Color(0x33A855F7)
+                            )
+                        }
+                    }
+                    is UpdateDownloadState.Failed -> {
+                        Row(
+                            modifier              = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(RedClosed.copy(alpha = 0.1f))
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment     = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Filled.Error,
+                                null,
+                                tint     = RedClosed,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                downloadState.message,
+                                color    = RedClosed,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                    else -> Unit
+                }
+
+                // Action buttons
+                Row(
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick  = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        shape    = RoundedCornerShape(12.dp),
+                        colors   = ButtonDefaults.outlinedButtonColors(
+                            contentColor = Color(0xFF94A3B8)
+                        )
+                    ) {
+                        Text("Later")
+                    }
+
+                    Button(
+                        onClick  = when (downloadState) {
+                            is UpdateDownloadState.ReadyToInstall -> onInstall
+                            is UpdateDownloadState.Downloading    -> { {} }   // disabled during download
+                            else                                  -> onDownload
+                        },
+                        enabled  = downloadState !is UpdateDownloadState.Downloading,
+                        modifier = Modifier.weight(1f),
+                        shape    = RoundedCornerShape(12.dp),
+                        colors   = ButtonDefaults.buttonColors(containerColor = BrandPurple)
+                    ) {
+                        when (downloadState) {
+                            is UpdateDownloadState.ReadyToInstall -> {
+                                Icon(
+                                    Icons.Filled.InstallMobile,
+                                    null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Install", fontWeight = FontWeight.Bold)
+                            }
+                            is UpdateDownloadState.Downloading -> {
+                                CircularProgressIndicator(
+                                    modifier    = Modifier.size(16.dp),
+                                    color       = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Downloading…")
+                            }
+                            else -> {
+                                Icon(
+                                    Icons.Filled.Download,
+                                    null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Download", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -241,7 +549,7 @@ fun AppTopBar(
         ),
         title = {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
+                verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Box(
@@ -251,11 +559,25 @@ fun AppTopBar(
                         .background(Brush.linearGradient(listOf(BrandPurple, BrandPink))),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                    Icon(
+                        Icons.Filled.PlayArrow,
+                        null,
+                        tint     = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
                 Column {
-                    Text("Aviator 1xBet", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text("10x Signal Generator", color = Color(0xFF94A3B8), fontSize = 10.sp)
+                    Text(
+                        "Aviator 1xBet",
+                        color      = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize   = 15.sp
+                    )
+                    Text(
+                        "10x Signal Generator",
+                        color    = Color(0xFF94A3B8),
+                        fontSize = 10.sp
+                    )
                 }
             }
         },
@@ -269,9 +591,9 @@ fun AppTopBar(
             ) {
                 Text(
                     timeStr,
-                    color = GreenActive,
+                    color      = GreenActive,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
+                    fontSize   = 14.sp,
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                 )
             }
@@ -313,7 +635,7 @@ fun AppBottomBar(
         tonalElevation = 8.dp
     ) {
         Column {
-            // Win/Loss quick bar (bottom nav strip)
+            // Win/Loss quick bar
             AnimatedVisibility(
                 visible = showWinLossBar && winLossSignalId != null,
                 enter   = fadeIn(),
@@ -332,10 +654,17 @@ fun AppBottomBar(
                             .weight(1f)
                             .height(44.dp),
                         shape  = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = GreenActive.copy(alpha = 0.25f)),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = GreenActive.copy(alpha = 0.25f)
+                        ),
                         border = ButtonDefaults.outlinedButtonBorder
                     ) {
-                        Icon(Icons.Filled.CheckCircle, null, tint = GreenActive, modifier = Modifier.size(18.dp))
+                        Icon(
+                            Icons.Filled.CheckCircle,
+                            null,
+                            tint     = GreenActive,
+                            modifier = Modifier.size(18.dp)
+                        )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("WIN", color = GreenActive, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
@@ -345,9 +674,16 @@ fun AppBottomBar(
                             .weight(1f)
                             .height(44.dp),
                         shape  = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = RedClosed.copy(alpha = 0.25f))
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = RedClosed.copy(alpha = 0.25f)
+                        )
                     ) {
-                        Icon(Icons.Filled.Cancel, null, tint = RedClosed, modifier = Modifier.size(18.dp))
+                        Icon(
+                            Icons.Filled.Cancel,
+                            null,
+                            tint     = RedClosed,
+                            modifier = Modifier.size(18.dp)
+                        )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("LOSS", color = RedClosed, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
@@ -368,19 +704,29 @@ fun AppBottomBar(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
-                        Text("Next:", color = Color(0xFF94A3B8), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Next:",
+                            color      = Color(0xFF94A3B8),
+                            fontSize   = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                         Text(
                             Formatters.formatTime(nextSignal.signal.resultTime),
-                            color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                            color      = Color.White,
+                            fontSize   = 12.sp,
+                            fontWeight = FontWeight.Bold,
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                         )
                         Text(
                             "(${String.format("%.2f", nextSignal.signal.odd)}x)",
-                            color = Color(0xFF64748B), fontSize = 11.sp
+                            color    = Color(0xFF64748B),
+                            fontSize = 11.sp
                         )
                         Text(
                             Formatters.formatCountdown(nextSignal.countdown),
-                            color = GreenActive, fontWeight = FontWeight.Bold, fontSize = 12.sp
+                            color      = GreenActive,
+                            fontWeight = FontWeight.Bold,
+                            fontSize   = 12.sp
                         )
                     }
                 } else {
@@ -401,7 +747,7 @@ fun AppBottomBar(
                     NavigationBarItem(
                         selected = selected,
                         onClick  = { onScreenChange(item.screen) },
-                        icon     = {
+                        icon = {
                             Icon(
                                 item.icon,
                                 contentDescription = item.label,
