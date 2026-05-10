@@ -14,24 +14,19 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 data class DownloadProgress(
-    val percent: Int        = 0,
-    val isComplete: Boolean = false,
-    val isFailed: Boolean   = false,
-    val localFile: File?    = null
+    val percent: Int           = 0,
+    val downloadedBytes: Long  = 0L,
+    val totalBytes: Long       = 0L,
+    val isComplete: Boolean    = false,
+    val isFailed: Boolean      = false,
+    val localFile: File?       = null
 )
 
 object UpdateInstaller {
 
-    /**
-     * Enqueues the APK download via [DownloadManager].
-     * Saves into the app's own external files dir (no storage permission needed,
-     * and FileProvider can always serve it via <external-files-path>).
-     */
     fun startDownload(context: Context, downloadUrl: String, fileName: String): Long {
         return try {
             val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-
-            // Ensure destination directory exists
             val destDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
             destDir?.mkdirs()
 
@@ -41,8 +36,6 @@ object UpdateInstaller {
                 setNotificationVisibility(
                     DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
                 )
-                // App-private external dir — no READ/WRITE_EXTERNAL_STORAGE permission needed
-                // FileProvider serves this via <external-files-path name="downloads" path="Downloads/"/>
                 setDestinationInExternalFilesDir(
                     context,
                     Environment.DIRECTORY_DOWNLOADS,
@@ -55,16 +48,12 @@ object UpdateInstaller {
                 setAllowedOverMetered(true)
                 setAllowedOverRoaming(false)
             }
-
             dm.enqueue(request)
         } catch (e: Exception) {
             -1L
         }
     }
 
-    /**
-     * Polls [DownloadManager] and emits [DownloadProgress] until done or failed.
-     */
     suspend fun pollProgress(
         context: Context,
         downloadId: Long,
@@ -97,7 +86,13 @@ object UpdateInstaller {
                 DownloadManager.STATUS_SUCCESSFUL -> {
                     val file = resolveFile(context, localUri, fileName)
                     if (file != null) {
-                        onProgress(DownloadProgress(percent = 100, isComplete = true, localFile = file))
+                        onProgress(DownloadProgress(
+                            percent       = 100,
+                            downloadedBytes = total,
+                            totalBytes    = total,
+                            isComplete    = true,
+                            localFile     = file
+                        ))
                     } else {
                         onProgress(DownloadProgress(isFailed = true))
                     }
@@ -109,11 +104,19 @@ object UpdateInstaller {
                 }
                 DownloadManager.STATUS_PAUSED,
                 DownloadManager.STATUS_PENDING -> {
-                    onProgress(DownloadProgress(percent = 0))
+                    onProgress(DownloadProgress(
+                        percent         = 0,
+                        downloadedBytes = 0L,
+                        totalBytes      = total.coerceAtLeast(0L)
+                    ))
                 }
                 DownloadManager.STATUS_RUNNING -> {
                     val percent = if (total > 0) ((downloaded * 100) / total).toInt() else 0
-                    onProgress(DownloadProgress(percent = percent))
+                    onProgress(DownloadProgress(
+                        percent         = percent,
+                        downloadedBytes = downloaded,
+                        totalBytes      = total.coerceAtLeast(0L)
+                    ))
                 }
             }
 
@@ -121,21 +124,7 @@ object UpdateInstaller {
         }
     }
 
-    /**
-     * Resolves the APK [File] after download completes.
-     *
-     * Tries multiple strategies in order so MIUI path mangling doesn't break things.
-     *
-     * Strategy 1 — parse the URI the DownloadManager returned
-     * Strategy 2 — canonical app-private external Downloads path
-     * Strategy 3 — public Downloads (fallback for older DownloadManager behaviour)
-     * Strategy 4 — Context.getFilesDir() internal path (MIUI remaps here on some ROMs)
-     * Strategy 5 — Context.getCacheDir() (last-resort internal cache)
-     * Strategy 6 — recursive search of all app-owned dirs
-     */
     private fun resolveFile(context: Context, localUri: String?, fileName: String): File? {
-
-        // Strategy 1: parse the URI the DownloadManager gave us
         if (!localUri.isNullOrBlank()) {
             try {
                 val path = Uri.parse(localUri).path
@@ -146,40 +135,26 @@ object UpdateInstaller {
             } catch (_: Exception) {}
         }
 
-        // Strategy 2: canonical app-private external Downloads path
-        val appPrivate = File(
-            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-            fileName
-        )
+        val appPrivate = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
         if (appPrivate.exists() && appPrivate.length() > 0) return appPrivate
 
-        // Strategy 3: public Downloads (fallback for older DownloadManager behaviour)
         val publicDownloads = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            fileName
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName
         )
         if (publicDownloads.exists() && publicDownloads.length() > 0) return publicDownloads
 
-        // Strategy 4: internal files dir — MIUI sometimes redirects getExternalFilesDir() here
-        val internalFilesDownloads = File(
-            File(context.filesDir, "Downloads"),
-            fileName
-        )
-        if (internalFilesDownloads.exists() && internalFilesDownloads.length() > 0) {
-            return internalFilesDownloads
-        }
-        // Also check directly under filesDir (no sub-folder)
+        val internalFilesDownloads = File(File(context.filesDir, "Downloads"), fileName)
+        if (internalFilesDownloads.exists() && internalFilesDownloads.length() > 0) return internalFilesDownloads
+
         val internalFiles = File(context.filesDir, fileName)
         if (internalFiles.exists() && internalFiles.length() > 0) return internalFiles
 
-        // Strategy 5: cache dir
         val cacheDownloads = File(File(context.cacheDir, "Downloads"), fileName)
         if (cacheDownloads.exists() && cacheDownloads.length() > 0) return cacheDownloads
+
         val cacheFile = File(context.cacheDir, fileName)
         if (cacheFile.exists() && cacheFile.length() > 0) return cacheFile
 
-        // Strategy 6: recursive scan of all app-owned external dirs (handles
-        // OEM-specific sub-directory remapping, e.g. MIUI's /data/user_de/...)
         try {
             context.getExternalFilesDirs(null).filterNotNull().forEach { dir ->
                 val found = findRecursive(dir, fileName)
@@ -190,7 +165,6 @@ object UpdateInstaller {
         return null
     }
 
-    /** Recursively searches [root] for a file named [fileName], max 3 levels deep. */
     private fun findRecursive(root: File, fileName: String, depth: Int = 0): File? {
         if (depth > 3) return null
         root.listFiles()?.forEach { f ->
@@ -203,9 +177,6 @@ object UpdateInstaller {
         return null
     }
 
-    /**
-     * Cancels an in-progress download.
-     */
     fun cancelDownload(context: Context, downloadId: Long) {
         runCatching {
             val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
@@ -213,17 +184,11 @@ object UpdateInstaller {
         }
     }
 
-    /**
-     * Returns true if the app can install unknown packages.
-     */
     fun canInstall(context: Context): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             context.packageManager.canRequestPackageInstalls()
         else true
 
-    /**
-     * Opens the "Install unknown apps" settings page for this app.
-     */
     fun openInstallPermissionSettings(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startActivity(
@@ -235,48 +200,24 @@ object UpdateInstaller {
         }
     }
 
-    /**
-     * Launches the system package installer for [apkFile].
-     *
-     * On MIUI the FileProvider URI must be granted explicitly — this method
-     * uses FLAG_GRANT_READ_URI_PERMISSION and also queries all possible
-     * installer packages to grant them read access before firing the Intent.
-     *
-     * Falls back to a plain file:// URI if FileProvider throws (very old devices).
-     */
     fun installApk(context: Context, apkFile: File) {
         if (!apkFile.exists()) return
 
         val uri: Uri = try {
-            FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                apkFile
-            )
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
         } catch (e: IllegalArgumentException) {
-            // FileProvider couldn't map this path — try copying to a known-good
-            // location first, then serve from there.
             val fallbackFile = copyToInternalFiles(context, apkFile)
             if (fallbackFile != null) {
                 try {
-                    FileProvider.getUriForFile(
-                        context,
-                        "${context.packageName}.fileprovider",
-                        fallbackFile
-                    )
+                    FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", fallbackFile)
                 } catch (_: Exception) {
-                    // Absolute last resort: plain file URI (works on API < 24)
-                    @Suppress("DEPRECATION")
-                    Uri.fromFile(fallbackFile)
+                    @Suppress("DEPRECATION") Uri.fromFile(fallbackFile)
                 }
             } else {
-                // Plain file URI fallback
-                @Suppress("DEPRECATION")
-                Uri.fromFile(apkFile)
+                @Suppress("DEPRECATION") Uri.fromFile(apkFile)
             }
         } catch (e: Exception) {
-            @Suppress("DEPRECATION")
-            Uri.fromFile(apkFile)
+            @Suppress("DEPRECATION") Uri.fromFile(apkFile)
         }
 
         val intent = Intent(Intent.ACTION_VIEW).apply {
@@ -286,15 +227,11 @@ object UpdateInstaller {
                     Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         }
 
-        // Grant read permission to every app that could handle this intent
-        // (covers MIUI's separate installer package)
         try {
-            val resolvedActivities = context.packageManager
-                .queryIntentActivities(intent, 0)
+            val resolvedActivities = context.packageManager.queryIntentActivities(intent, 0)
             for (info in resolvedActivities) {
                 context.grantUriPermission(
-                    info.activityInfo.packageName,
-                    uri,
+                    info.activityInfo.packageName, uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             }
@@ -303,11 +240,6 @@ object UpdateInstaller {
         context.startActivity(intent)
     }
 
-    /**
-     * Copies [src] into [Context.getFilesDir()]/Downloads/ so FileProvider can
-     * always serve it via the <files-path> entry in file_provider_paths.xml.
-     * Returns the new [File] on success, null on failure.
-     */
     private fun copyToInternalFiles(context: Context, src: File): File? {
         return try {
             val destDir = File(context.filesDir, "Downloads").also { it.mkdirs() }
@@ -319,46 +251,29 @@ object UpdateInstaller {
         }
     }
 
-    /**
-     * Finds a previously downloaded APK. Checks app-private external dir first,
-     * then internal files dir (MIUI), then public Downloads as fallback.
-     */
     fun findDownloadedApk(context: Context, fileName: String): File? {
-        // App-private external Downloads (normal Android)
-        val appPrivate = File(
-            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-            fileName
-        )
+        val appPrivate = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
         if (appPrivate.exists() && appPrivate.length() > 0) return appPrivate
 
-        // Internal files/Downloads (MIUI remapping)
         val internalDownloads = File(File(context.filesDir, "Downloads"), fileName)
         if (internalDownloads.exists() && internalDownloads.length() > 0) return internalDownloads
 
-        // Internal files root
         val internalRoot = File(context.filesDir, fileName)
         if (internalRoot.exists() && internalRoot.length() > 0) return internalRoot
 
-        // Public Downloads (fallback)
         val publicDir = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            fileName
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName
         )
         if (publicDir.exists() && publicDir.length() > 0) return publicDir
 
         return null
     }
 
-    /**
-     * Deletes old Aviator APKs from all known locations to free space.
-     */
     fun cleanOldApks(context: Context) {
-        // App-private external
         context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
             ?.listFiles { f -> f.name.startsWith("AviatorPredictor") && f.name.endsWith(".apk") }
             ?.forEach { it.delete() }
 
-        // Internal files/Downloads (MIUI)
         File(context.filesDir, "Downloads")
             .listFiles { f -> f.name.startsWith("AviatorPredictor") && f.name.endsWith(".apk") }
             ?.forEach { it.delete() }

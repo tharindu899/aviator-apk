@@ -30,8 +30,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aviator.predictor.data.models.SignalStatus
@@ -40,23 +38,9 @@ import com.aviator.predictor.ui.components.*
 import com.aviator.predictor.ui.screens.*
 import com.aviator.predictor.ui.theme.*
 import com.aviator.predictor.utils.Formatters
+import com.aviator.predictor.utils.UpdateInfo
 import java.text.SimpleDateFormat
 import java.util.*
-
-// ── Update models ─────────────────────────────────────────────────────────────
-
-data class UpdateInfo(
-    val latestVersion: String,
-    val downloadUrl: String,
-    val releaseNotes: String = ""
-)
-
-sealed class UpdateDownloadState {
-    object Idle : UpdateDownloadState()
-    data class Downloading(val progress: Int) : UpdateDownloadState()
-    object ReadyToInstall : UpdateDownloadState()
-    data class Failed(val message: String) : UpdateDownloadState()
-}
 
 // ── Screens ───────────────────────────────────────────────────────────────────
 
@@ -194,9 +178,17 @@ fun AviatorApp(
                         !state.showUpdateDialog &&
                         state.updateDownloadState !is UpdateDownloadState.ReadyToInstall
                     ) {
-                        UpdateBanner(latestVersion = state.updateInfo.latestVersion, onClick = onShowUpdateDialog)
+                        // Use UpdateBanner from components package
+                        UpdateBanner(
+                            latestVersion = state.updateInfo.latestVersion,
+                            onClick       = onShowUpdateDialog
+                        )
                     }
-                    AppTopBar(state = state, currentTime = currentTime, onRetrySync = onRetrySync)
+                    AppTopBar(
+                        state       = state,
+                        currentTime = currentTime,
+                        onRetrySync = onRetrySync
+                    )
                 }
             },
             bottomBar = {
@@ -210,7 +202,8 @@ fun AviatorApp(
                     onMarkWin       = onMarkWin,
                     onMarkLoss      = onMarkLoss,
                     hasUpdate       = state.updateInfo != null,
-                    onShowUpdate    = onShowUpdateDialog
+                    onShowUpdate    = onShowUpdateDialog,
+                    onRetrySync     = onRetrySync          // ← passed through to bottom strip
                 )
             }
         ) { padding ->
@@ -224,6 +217,7 @@ fun AviatorApp(
             }
         }
 
+        // Use UpdateDialog from components package
         if (state.showUpdateDialog && state.updateInfo != null) {
             UpdateDialog(
                 updateInfo    = state.updateInfo,
@@ -232,142 +226,6 @@ fun AviatorApp(
                 onInstall     = onInstallUpdate,
                 onDismiss     = onDismissUpdate
             )
-        }
-    }
-}
-
-// ── Update Banner ─────────────────────────────────────────────────────────────
-
-@Composable
-fun UpdateBanner(latestVersion: String, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(BrandPurple.copy(alpha = 0.15f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment     = Alignment.CenterVertically
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.SystemUpdateAlt, null, tint = BrandPurple, modifier = Modifier.size(16.dp))
-            Text("Update available — v$latestVersion", color = BrandPurple, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        }
-        Text("View", color = BrandPurple, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-// ── Update Dialog ─────────────────────────────────────────────────────────────
-
-@Composable
-fun UpdateDialog(
-    updateInfo: UpdateInfo,
-    downloadState: UpdateDownloadState,
-    onDownload: () -> Unit,
-    onInstall: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(SlateSurface)
-                .border(1.dp, BrandPurple.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
-                .padding(24.dp)
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp))
-                                .background(Brush.linearGradient(listOf(BrandPurple, BrandPink))),
-                            contentAlignment = Alignment.Center
-                        ) { Icon(Icons.Filled.SystemUpdateAlt, null, tint = Color.White, modifier = Modifier.size(20.dp)) }
-                        Column {
-                            Text("Update Available", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            Text("v${updateInfo.latestVersion}", color = BrandPurple, fontSize = 12.sp)
-                        }
-                    }
-                    IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, null, tint = Color(0xFF94A3B8)) }
-                }
-
-                if (updateInfo.releaseNotes.isNotBlank()) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                            .background(Color(0x22334155)).padding(12.dp)
-                    ) { Text(updateInfo.releaseNotes, color = Color(0xFFCBD5E1), fontSize = 13.sp) }
-                }
-
-                when (downloadState) {
-                    is UpdateDownloadState.Downloading -> {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Downloading…", color = Color(0xFF94A3B8), fontSize = 12.sp)
-                                Text("${downloadState.progress}%", color = BrandPurple, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                            LinearProgressIndicator(
-                                progress  = { downloadState.progress / 100f },
-                                modifier  = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-                                color     = BrandPurple,
-                                trackColor = Color(0x33A855F7)
-                            )
-                        }
-                    }
-                    is UpdateDownloadState.Failed -> {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                                .background(RedClosed.copy(alpha = 0.1f)).padding(10.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment     = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Filled.Error, null, tint = RedClosed, modifier = Modifier.size(16.dp))
-                            Text(downloadState.message, color = RedClosed, fontSize = 12.sp)
-                        }
-                    }
-                    else -> Unit
-                }
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(
-                        onClick  = onDismiss,
-                        modifier = Modifier.weight(1f),
-                        shape    = RoundedCornerShape(12.dp),
-                        colors   = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF94A3B8))
-                    ) { Text("Later") }
-
-                    Button(
-                        onClick  = when (downloadState) {
-                            is UpdateDownloadState.ReadyToInstall -> onInstall
-                            is UpdateDownloadState.Downloading    -> { {} }
-                            else                                  -> onDownload
-                        },
-                        enabled  = downloadState !is UpdateDownloadState.Downloading,
-                        modifier = Modifier.weight(1f),
-                        shape    = RoundedCornerShape(12.dp),
-                        colors   = ButtonDefaults.buttonColors(containerColor = BrandPurple)
-                    ) {
-                        when (downloadState) {
-                            is UpdateDownloadState.ReadyToInstall -> {
-                                Icon(Icons.Filled.InstallMobile, null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Install", fontWeight = FontWeight.Bold)
-                            }
-                            is UpdateDownloadState.Downloading -> {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Downloading…")
-                            }
-                            else -> {
-                                Icon(Icons.Filled.Download, null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Download", fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -385,7 +243,9 @@ fun AppTopBar(state: AppUiState, currentTime: Long, onRetrySync: () -> Unit) {
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(
-                    modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp))
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
                         .background(Brush.linearGradient(listOf(BrandPurple, BrandPink))),
                     contentAlignment = Alignment.Center
                 ) { Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(20.dp)) }
@@ -403,8 +263,13 @@ fun AppTopBar(state: AppUiState, currentTime: Long, onRetrySync: () -> Unit) {
                     .border(1.dp, Color(0x33A855F7), RoundedCornerShape(10.dp))
                     .padding(horizontal = 10.dp, vertical = 6.dp)
             ) {
-                Text(timeStr, color = GreenActive, fontWeight = FontWeight.Bold, fontSize = 14.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                Text(
+                    timeStr,
+                    color      = GreenActive,
+                    fontWeight = FontWeight.Bold,
+                    fontSize   = 14.sp,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                )
             }
             Spacer(modifier = Modifier.width(8.dp))
             UserAvatar(photoUrl = state.user?.photoUrl, displayName = state.user?.displayName ?: "", size = 36.dp)
@@ -428,7 +293,8 @@ fun AppBottomBar(
     onMarkWin: (String) -> Unit,
     onMarkLoss: (String) -> Unit,
     hasUpdate: Boolean,
-    onShowUpdate: () -> Unit
+    onShowUpdate: () -> Unit,
+    onRetrySync: () -> Unit            // ← manual refresh
 ) {
     val navItems = listOf(
         NavItem(Screen.HOME,     Icons.Filled.Home,      "Home"),
@@ -439,14 +305,17 @@ fun AppBottomBar(
 
     Surface(color = SlateSurface.copy(alpha = 0.97f), tonalElevation = 8.dp) {
         Column {
-            // Win/Loss quick bar
+
+            // ── Win / Loss quick bar ──────────────────────────────────────
             AnimatedVisibility(
                 visible = showWinLossBar && winLossSignalId != null,
                 enter   = fadeIn(),
                 exit    = fadeOut()
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().background(Color(0x33334155))
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0x33334155))
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
@@ -474,54 +343,68 @@ fun AppBottomBar(
                 }
             }
 
-            // Next signal + sync strip
+            // ── Next signal + sync strip ──────────────────────────────────
             Row(
-                modifier = Modifier.fillMaxWidth().background(Color(0x22334155))
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0x22334155))
                     .padding(horizontal = 16.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment     = Alignment.CenterVertically
             ) {
+                // Next signal info
                 if (nextSignal != null) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment     = Alignment.CenterVertically
+                    ) {
                         Text("Next:", color = Color(0xFF94A3B8), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                        Text(Formatters.formatTime(nextSignal.signal.resultTime), color = Color.White, fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-                        Text("(${String.format("%.2f", nextSignal.signal.odd)}x)", color = Color(0xFF64748B), fontSize = 11.sp)
-                        Text(Formatters.formatCountdown(nextSignal.countdown), color = GreenActive, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(
+                            Formatters.formatTime(nextSignal.signal.resultTime),
+                            color = Color.White, fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                        Text(
+                            "(${String.format("%.2f", nextSignal.signal.odd)}x)",
+                            color = Color(0xFF64748B), fontSize = 11.sp
+                        )
+                        Text(
+                            Formatters.formatCountdown(nextSignal.countdown),
+                            color = GreenActive, fontWeight = FontWeight.Bold, fontSize = 12.sp
+                        )
                     }
                 } else {
                     Text("No upcoming signals", color = Color(0xFF475569), fontSize = 11.sp)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+
+                // Right side: sync pill + manual refresh button
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment     = Alignment.CenterVertically
+                ) {
                     SyncStatusPill(syncStatus)
-                    // Version badge
-                    Box(
+
+                    // Manual refresh button (replaces the version badge)
+                    IconButton(
+                        onClick  = onRetrySync,
                         modifier = Modifier
+                            .size(28.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(BrandPurple.copy(alpha = 0.15f))
                             .border(1.dp, BrandPurple.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                            .then(if (hasUpdate) Modifier.clickable { onShowUpdate() } else Modifier)
-                            .padding(horizontal = 6.dp, vertical = 3.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(
-                                "v${BuildConfig.VERSION_NAME}",
-                                color      = if (hasUpdate) OrangeWaiting else BrandPurple,
-                                fontSize   = 9.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            if (hasUpdate) {
-                                Box(
-                                    modifier = Modifier.size(5.dp).clip(androidx.compose.foundation.shape.CircleShape)
-                                        .background(OrangeWaiting)
-                                )
-                            }
-                        }
+                        Icon(
+                            Icons.Filled.Refresh,
+                            contentDescription = "Refresh sync",
+                            tint     = BrandPurple,
+                            modifier = Modifier.size(15.dp)
+                        )
                     }
                 }
             }
 
-            // Tab row
+            // ── Navigation tab row ────────────────────────────────────────
             NavigationBar(
                 containerColor = Color.Transparent,
                 contentColor   = Color.White,
@@ -536,19 +419,25 @@ fun AppBottomBar(
                         icon = {
                             BadgedBox(
                                 badge = {
-                                    // Show update dot on Profile tab when update available
+                                    // Update dot on Profile tab only (version badge removed from strip)
                                     if (item.screen == Screen.PROFILE && hasUpdate) {
                                         Badge(containerColor = OrangeWaiting)
                                     }
                                 }
                             ) {
-                                Icon(item.icon, contentDescription = item.label,
-                                    modifier = Modifier.size(if (selected) 26.dp else 24.dp))
+                                Icon(
+                                    item.icon,
+                                    contentDescription = item.label,
+                                    modifier = Modifier.size(if (selected) 26.dp else 24.dp)
+                                )
                             }
                         },
                         label = {
-                            Text(item.label, fontSize = 10.sp,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                            Text(
+                                item.label,
+                                fontSize   = 10.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                            )
                         },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor   = BrandPurple,

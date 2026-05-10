@@ -23,10 +23,25 @@ import java.util.*
 enum class SyncStatus { PENDING, SYNCING, SYNCED, OFFLINE, ERROR }
 
 sealed class UpdateDownloadState {
-    object Idle                                : UpdateDownloadState()
-    data class Downloading(val percent: Int)   : UpdateDownloadState()
-    data class ReadyToInstall(val file: File)  : UpdateDownloadState()
-    object Failed                              : UpdateDownloadState()
+    object Idle : UpdateDownloadState()
+
+    /**
+     * @param percent         0–100
+     * @param downloadedMb    bytes downloaded, expressed in MB
+     * @param totalMb         total file size in MB (0 if unknown)
+     * @param etaSeconds      estimated seconds remaining (0 if unknown)
+     * @param speedKbps       current download speed in KB/s
+     */
+    data class Downloading(
+        val percent: Int       = 0,
+        val downloadedMb: Float = 0f,
+        val totalMb: Float     = 0f,
+        val etaSeconds: Int    = 0,
+        val speedKbps: Float   = 0f
+    ) : UpdateDownloadState()
+
+    data class ReadyToInstall(val file: File) : UpdateDownloadState()
+    object Failed : UpdateDownloadState()
 }
 
 data class AppUiState(
@@ -42,7 +57,7 @@ data class AppUiState(
     val error: String? = null,
     val upcomingSignals: List<SignalWithWindow> = emptyList(),
     val currentSignal: SignalWithWindow? = null,
-    // ── Update ──────────────────────────────────────────────
+    // ── Update ──────────────────────────────────────────────────────────────
     val updateInfo: UpdateInfo? = null,
     val showUpdateDialog: Boolean = false,
     val updateDownloadState: UpdateDownloadState = UpdateDownloadState.Idle
@@ -61,6 +76,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var autoMarkJob: Job? = null
     private var downloadJob: Job? = null
     private var activeDownloadId: Long = -1L
+
+    // Download speed tracking
+    private var downloadStartTimeMs: Long = 0L
 
     private val notifiedSignalIds = mutableSetOf<String>()
 
@@ -91,7 +109,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 _state.update { it.copy(isAuthLoading = false) }
             }
-            // Always check for updates on launch
             checkForUpdate()
         }
     }
@@ -138,12 +155,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun checkForUpdate() {
         viewModelScope.launch {
             val info = UpdateChecker.checkForUpdate(BuildConfig.VERSION_NAME) ?: return@launch
-            _state.update {
-                it.copy(
-                    updateInfo       = info,
-                    showUpdateDialog = true
-                )
-            }
+            _state.update { it.copy(updateInfo = info, showUpdateDialog = true) }
         }
     }
 
@@ -160,7 +172,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val info    = _state.value.updateInfo ?: return
         val context = getApplication<Application>()
 
-        // Reuse cached APK if already downloaded
         val existing = UpdateInstaller.findDownloadedApk(context, info.apkFileName)
         if (existing != null) {
             _state.update {
@@ -169,7 +180,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // Check "install unknown apps" permission
         if (!UpdateInstaller.canInstall(context)) {
             UpdateInstaller.openInstallPermissionSettings(context)
             return
@@ -183,11 +193,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        activeDownloadId = downloadId
-        _state.update { it.copy(updateDownloadState = UpdateDownloadState.Downloading(0)) }
+        activeDownloadId   = downloadId
+        downloadStartTimeMs = System.currentTimeMillis()
+
+        _state.update {
+            it.copy(updateDownloadState = UpdateDownloadState.Downloading(percent = 0))
+        }
 
         downloadJob = viewModelScope.launch {
-            // ✅ Pass info.apkFileName so pollProgress can resolve the file on completion
             UpdateInstaller.pollProgress(context, downloadId, info.apkFileName) { progress ->
                 when {
                     progress.isFailed -> {
@@ -201,8 +214,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     else -> {
+                        // Compute speed and ETA from elapsed time
+                        val elapsedSec = (System.currentTimeMillis() - downloadStartTimeMs) / 1000f
+                        val speedBytesPerSec = if (elapsedSec > 0 && progress.downloadedBytes > 0) {
+                            progress.downloadedBytes / elapsedSec
+                        } else 0f
+                        val remainingBytes = (progress.totalBytes - progress.downloadedBytes).coerceAtLeast(0L)
+                        val eta = if (speedBytesPerSec > 1024f) {
+                            (remainingBytes / speedBytesPerSec).toInt()
+                        } else 0
+
                         _state.update {
-                            it.copy(updateDownloadState = UpdateDownloadState.Downloading(progress.percent))
+                            it.copy(
+                                updateDownloadState = UpdateDownloadState.Downloading(
+                                    percent      = progress.percent,
+                                    downloadedMb = progress.downloadedBytes / (1024f * 1024f),
+                                    totalMb      = progress.totalBytes / (1024f * 1024f),
+                                    etaSeconds   = eta,
+                                    speedKbps    = speedBytesPerSec / 1024f
+                                )
+                            )
                         }
                     }
                 }
@@ -220,7 +251,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             UpdateInstaller.openInstallPermissionSettings(context)
             return
         }
-        // ✅ Verify the file still exists before trying to install
         if (!dlState.file.exists()) {
             _state.update { it.copy(updateDownloadState = UpdateDownloadState.Failed) }
             return
@@ -300,8 +330,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val signals  = driveRepo.loadSignals(token)
                     val computed = computeUpcoming(signals)
                     _state.update {
-                        it.copy(signals = signals, syncStatus = SyncStatus.SYNCED,
-                            upcomingSignals = computed.first, currentSignal = computed.second)
+                        it.copy(
+                            signals         = signals,
+                            syncStatus      = SyncStatus.SYNCED,
+                            upcomingSignals = computed.first,
+                            currentSignal   = computed.second
+                        )
                     }
                 } catch (_: Exception) {
                     _state.update { it.copy(syncStatus = SyncStatus.OFFLINE) }
@@ -393,8 +427,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val newSignals = listOf(newSignal) + _state.value.signals
                 val computed   = computeUpcoming(newSignals)
                 _state.update {
-                    it.copy(signals = newSignals, isGenerating = false,
-                        upcomingSignals = computed.first, currentSignal = computed.second)
+                    it.copy(
+                        signals = newSignals, isGenerating = false,
+                        upcomingSignals = computed.first, currentSignal = computed.second
+                    )
                 }
                 onResult(true, "Signal generated!")
             } else {

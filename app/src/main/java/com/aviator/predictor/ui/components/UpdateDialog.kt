@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -25,6 +26,18 @@ import androidx.compose.ui.window.DialogProperties
 import com.aviator.predictor.ui.UpdateDownloadState
 import com.aviator.predictor.ui.theme.*
 import com.aviator.predictor.utils.UpdateInfo
+
+// ── Helper: format ETA nicely ─────────────────────────────────────────────────
+
+private fun formatEta(seconds: Int): String = when {
+    seconds <= 0  -> ""
+    seconds < 60  -> "${seconds}s left"
+    else          -> "${seconds / 60}m ${seconds % 60}s left"
+}
+
+private fun formatMb(mb: Float): String = String.format("%.1f MB", mb)
+
+// ── Main update dialog ────────────────────────────────────────────────────────
 
 @Composable
 fun UpdateDialog(
@@ -36,7 +49,6 @@ fun UpdateDialog(
 ) {
     Dialog(
         onDismissRequest = {
-            // Only allow dismiss if not mid-download
             if (downloadState !is UpdateDownloadState.Downloading) onDismiss()
         },
         properties = DialogProperties(dismissOnClickOutside = false)
@@ -56,7 +68,7 @@ fun UpdateDialog(
 
                 // ── Header ────────────────────────────────────────────────
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalAlignment     = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Box(
@@ -94,7 +106,7 @@ fun UpdateDialog(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 140.dp)
+                        .heightIn(max = 120.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0x33334155))
                         .padding(12.dp)
@@ -132,10 +144,7 @@ fun UpdateDialog(
                                 shape    = RoundedCornerShape(12.dp),
                                 colors   = ButtonDefaults.buttonColors(containerColor = BrandPurple)
                             ) {
-                                Icon(
-                                    Icons.Filled.Download, null,
-                                    modifier = Modifier.size(18.dp)
-                                )
+                                Icon(Icons.Filled.Download, null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text("Download & Install", fontWeight = FontWeight.Bold)
                             }
@@ -143,7 +152,9 @@ fun UpdateDialog(
                     }
 
                     is UpdateDownloadState.Downloading -> {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+
+                            // Top row: label + percentage
                             Row(
                                 modifier              = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -158,20 +169,97 @@ fun UpdateDialog(
                                 Text(
                                     "${downloadState.percent}%",
                                     color      = BrandPurple,
-                                    fontSize   = 13.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontSize   = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
                                 )
                             }
 
+                            // Progress bar
                             LinearProgressIndicator(
-                                progress        = { downloadState.percent / 100f },
-                                modifier        = Modifier
+                                progress   = { downloadState.percent / 100f },
+                                modifier   = Modifier
                                     .fillMaxWidth()
                                     .height(8.dp)
                                     .clip(RoundedCornerShape(4.dp)),
-                                color           = BrandPurple,
-                                trackColor      = Color(0x33A855F7)
+                                color      = BrandPurple,
+                                trackColor = Color(0x33A855F7)
                             )
+
+                            // Size + ETA row
+                            Row(
+                                modifier              = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment     = Alignment.CenterVertically
+                            ) {
+                                // Downloaded / total size
+                                if (downloadState.totalMb > 0.1f) {
+                                    Row(
+                                        verticalAlignment     = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.CloudDownload, null,
+                                            tint     = Color(0xFF64748B),
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Text(
+                                            "${formatMb(downloadState.downloadedMb)} / ${formatMb(downloadState.totalMb)}",
+                                            color    = Color(0xFF64748B),
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                } else {
+                                    Text(
+                                        "Calculating size…",
+                                        color    = Color(0xFF64748B),
+                                        fontSize = 11.sp
+                                    )
+                                }
+
+                                // ETA
+                                if (downloadState.etaSeconds > 0) {
+                                    Row(
+                                        verticalAlignment     = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Timer, null,
+                                            tint     = OrangeWaiting,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Text(
+                                            formatEta(downloadState.etaSeconds),
+                                            color      = OrangeWaiting,
+                                            fontSize   = 11.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Speed chip
+                            if (downloadState.speedKbps > 1f) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(BrandPurple.copy(alpha = 0.1f))
+                                        .border(1.dp, BrandPurple.copy(0.2f), RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        if (downloadState.speedKbps >= 1024f)
+                                            String.format("%.1f MB/s", downloadState.speedKbps / 1024f)
+                                        else
+                                            String.format("%.0f KB/s", downloadState.speedKbps),
+                                        color      = BrandPurple,
+                                        fontSize   = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                            }
 
                             Text(
                                 "Please keep the app open",
@@ -184,44 +272,30 @@ fun UpdateDialog(
                     is UpdateDownloadState.ReadyToInstall -> {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(
-                                modifier          = Modifier
+                                modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(GreenActive.copy(alpha = 0.12f))
                                     .padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                                verticalAlignment     = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(
-                                    Icons.Filled.CheckCircle, null,
-                                    tint     = GreenActive,
-                                    modifier = Modifier.size(18.dp)
-                                )
+                                Icon(Icons.Filled.CheckCircle, null, tint = GreenActive, modifier = Modifier.size(18.dp))
                                 Text(
                                     "Download complete — tap Install to update",
-                                    color    = GreenActive,
-                                    fontSize = 13.sp
+                                    color = GreenActive, fontSize = 13.sp
                                 )
                             }
 
                             Button(
                                 onClick  = onInstall,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(50.dp),
-                                shape  = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = GreenActive)
+                                modifier = Modifier.fillMaxWidth().height(50.dp),
+                                shape    = RoundedCornerShape(12.dp),
+                                colors   = ButtonDefaults.buttonColors(containerColor = GreenActive)
                             ) {
-                                Icon(
-                                    Icons.Filled.InstallMobile, null,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                Icon(Icons.Filled.InstallMobile, null, modifier = Modifier.size(20.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    "Install Now",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize   = 16.sp
-                                )
+                                Text("Install Now", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                             }
                         }
                     }
@@ -237,16 +311,8 @@ fun UpdateDialog(
                                 verticalAlignment     = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(
-                                    Icons.Filled.ErrorOutline, null,
-                                    tint     = RedClosed,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Text(
-                                    "Download failed. Check your connection.",
-                                    color    = RedClosed,
-                                    fontSize = 13.sp
-                                )
+                                Icon(Icons.Filled.ErrorOutline, null, tint = RedClosed, modifier = Modifier.size(18.dp))
+                                Text("Download failed. Check your connection.", color = RedClosed, fontSize = 13.sp)
                             }
                             Row(
                                 modifier              = Modifier.fillMaxWidth(),
@@ -256,9 +322,7 @@ fun UpdateDialog(
                                     onClick  = onDismiss,
                                     modifier = Modifier.weight(1f),
                                     shape    = RoundedCornerShape(12.dp),
-                                    colors   = ButtonDefaults.outlinedButtonColors(
-                                        contentColor = Color(0xFF94A3B8)
-                                    )
+                                    colors   = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF94A3B8))
                                 ) { Text("Cancel") }
                                 Button(
                                     onClick  = onDownload,
@@ -275,13 +339,10 @@ fun UpdateDialog(
     }
 }
 
-// ── Small banner shown at top of screen when update is ready ─────────────────
+// ── Update banner ─────────────────────────────────────────────────────────────
 
 @Composable
-fun UpdateBanner(
-    latestVersion: String,
-    onClick: () -> Unit
-) {
+fun UpdateBanner(latestVersion: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -308,12 +369,7 @@ fun UpdateBanner(
                 )
             }
             TextButton(onClick = onClick) {
-                Text(
-                    "Update",
-                    color      = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize   = 13.sp
-                )
+                Text("Update", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
         }
     }
