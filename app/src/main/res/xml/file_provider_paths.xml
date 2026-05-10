@@ -2,35 +2,66 @@
 <!--
     FileProvider path declarations for Aviator Predictor.
 
-    <external-files-path> → Context.getExternalFilesDir()
-        Maps:  /sdcard/Android/data/com.aviator.predictor/files/Downloads/
-        Used by UpdateInstaller.startDownload() (primary strategy)
+    <files-path>           → Context.getFilesDir()
+        Maps:  /data/user/0/com.aviator.predictor/files/
+        MIUI remaps getExternalFilesDir() here on some firmware versions.
 
-    <external-path> → Environment.getExternalStorageDirectory()
+    <cache-path>           → Context.getCacheDir()
+        Maps:  /data/user/0/com.aviator.predictor/cache/
+        Safety net for cache-dir downloads.
+
+    <external-files-path>  → Context.getExternalFilesDir()
+        Maps:  /sdcard/Android/data/com.aviator.predictor/files/Downloads/
+        Used by UpdateInstaller.startDownload() (primary strategy on stock Android)
+
+    <external-path>        → Environment.getExternalStorageDirectory()
         Maps:  /sdcard/Download/   and   /sdcard/Downloads/
         Fallback in case DownloadManager resolves to public storage on some ROMs.
 
-    Both entries are needed so installApk() can serve whichever path
+    All entries are required so installApk() can serve whichever path
     resolveFile() returns without throwing IllegalArgumentException.
 -->
 <paths>
-    <!-- Primary: app-private external Downloads (no storage permission needed) -->
+
+    <!-- ── Internal storage (MIUI fix) ─────────────────────────────────── -->
+
+    <!-- Covers Context.getFilesDir() — MIUI sometimes redirects here -->
+    <files-path
+        name="internal_files"
+        path="." />
+
+    <!-- Covers Context.getCacheDir() -->
+    <cache-path
+        name="cache"
+        path="." />
+
+    <!-- ── External app-private storage (primary on stock Android) ──────── -->
+
+    <!-- App-private external Downloads (no storage permission needed) -->
     <external-files-path
         name="downloads"
         path="Downloads/" />
 
-    <!-- Fallback A: public Download folder (some DownloadManager implementations) -->
+    <!-- Root of app-private external files (catch-all) -->
+    <external-files-path
+        name="external_files_root"
+        path="." />
+
+    <!-- ── Public external storage (DownloadManager fallback) ───────────── -->
+
+    <!-- Public Download folder (some DownloadManager implementations) -->
     <external-path
         name="public_download"
         path="Download/" />
 
-    <!-- Fallback B: public Downloads folder (alternate spelling on some devices) -->
+    <!-- Public Downloads folder (alternate spelling on some devices) -->
     <external-path
         name="public_downloads"
         path="Downloads/" />
 
-    <!-- Fallback C: root of external storage (covers any sub-path) -->
+    <!-- Root of external storage (covers any sub-path, last resort) -->
     <external-path
         name="external_root"
         path="." />
+
 </paths>
