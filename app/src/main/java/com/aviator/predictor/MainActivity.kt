@@ -9,6 +9,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -23,6 +24,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -178,7 +180,6 @@ fun AviatorApp(
                         !state.showUpdateDialog &&
                         state.updateDownloadState !is UpdateDownloadState.ReadyToInstall
                     ) {
-                        // Use UpdateBanner from components package
                         UpdateBanner(
                             latestVersion = state.updateInfo.latestVersion,
                             onClick       = onShowUpdateDialog
@@ -203,7 +204,7 @@ fun AviatorApp(
                     onMarkLoss      = onMarkLoss,
                     hasUpdate       = state.updateInfo != null,
                     onShowUpdate    = onShowUpdateDialog,
-                    onRetrySync     = onRetrySync          // ← passed through to bottom strip
+                    onRetrySync     = onRetrySync
                 )
             }
         ) { padding ->
@@ -217,7 +218,6 @@ fun AviatorApp(
             }
         }
 
-        // Use UpdateDialog from components package
         if (state.showUpdateDialog && state.updateInfo != null) {
             UpdateDialog(
                 updateInfo    = state.updateInfo,
@@ -294,13 +294,26 @@ fun AppBottomBar(
     onMarkLoss: (String) -> Unit,
     hasUpdate: Boolean,
     onShowUpdate: () -> Unit,
-    onRetrySync: () -> Unit            // ← manual refresh
+    onRetrySync: () -> Unit
 ) {
     val navItems = listOf(
         NavItem(Screen.HOME,     Icons.Filled.Home,      "Home"),
         NavItem(Screen.GENERATE, Icons.Filled.PlayArrow, "Generate"),
         NavItem(Screen.RESULTS,  Icons.Filled.BarChart,  "Results"),
         NavItem(Screen.PROFILE,  Icons.Filled.Person,    "Profile")
+    )
+
+    // ── Spinning animation: active while syncStatus == SYNCING ────────────
+    val isSyncing = syncStatus == SyncStatus.SYNCING
+    val infiniteTransition = rememberInfiniteTransition(label = "refresh_spin")
+    val spinAngle by infiniteTransition.animateFloat(
+        initialValue  = 0f,
+        targetValue   = 360f,
+        animationSpec = infiniteRepeatable(
+            animation  = tween(durationMillis = 800, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "spin_angle"
     )
 
     Surface(color = SlateSurface.copy(alpha = 0.97f), tonalElevation = 8.dp) {
@@ -378,27 +391,39 @@ fun AppBottomBar(
                     Text("No upcoming signals", color = Color(0xFF475569), fontSize = 11.sp)
                 }
 
-                // Right side: sync pill + manual refresh button
+                // Right side: sync pill + spinning refresh button
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment     = Alignment.CenterVertically
                 ) {
                     SyncStatusPill(syncStatus)
 
-                    // Manual refresh button (replaces the version badge)
-                    IconButton(
-                        onClick  = onRetrySync,
+                    // Compact refresh button — icon spins when isSyncing,
+                    // tap is disabled while a sync is already in progress
+                    Box(
                         modifier = Modifier
                             .size(28.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(BrandPurple.copy(alpha = 0.15f))
-                            .border(1.dp, BrandPurple.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                            .background(
+                                if (isSyncing) BrandPurple.copy(alpha = 0.25f)
+                                else           BrandPurple.copy(alpha = 0.15f)
+                            )
+                            .border(
+                                1.dp,
+                                if (isSyncing) BrandPurple.copy(alpha = 0.6f)
+                                else           BrandPurple.copy(alpha = 0.3f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable(enabled = !isSyncing) { onRetrySync() },
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             Icons.Filled.Refresh,
                             contentDescription = "Refresh sync",
                             tint     = BrandPurple,
-                            modifier = Modifier.size(15.dp)
+                            modifier = Modifier
+                                .size(15.dp)
+                                .rotate(if (isSyncing) spinAngle else 0f)
                         )
                     }
                 }
@@ -419,7 +444,6 @@ fun AppBottomBar(
                         icon = {
                             BadgedBox(
                                 badge = {
-                                    // Update dot on Profile tab only (version badge removed from strip)
                                     if (item.screen == Screen.PROFILE && hasUpdate) {
                                         Badge(containerColor = OrangeWaiting)
                                     }
