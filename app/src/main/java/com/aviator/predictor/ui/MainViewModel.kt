@@ -43,6 +43,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var autoMarkJob: Job? = null
 
     init {
+        // No persistent session to restore — immediately show sign-in screen
+        _state.update { it.copy(isAuthLoading = false) }
         startAutoMarkMissed()
     }
 
