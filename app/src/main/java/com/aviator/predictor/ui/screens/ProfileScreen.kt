@@ -1,7 +1,10 @@
 package com.aviator.predictor.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,15 +16,23 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aviator.predictor.BuildConfig
 import com.aviator.predictor.data.models.*
 import com.aviator.predictor.ui.AppUiState
 import com.aviator.predictor.ui.components.*
 import com.aviator.predictor.ui.theme.*
 import com.aviator.predictor.utils.Formatters
+
+private const val GITHUB_URL    = "https://github.com/tharindu899"
+private const val PORTFOLIO_URL = "http://web.toxybox99.eu.org/"
+private const val GITHUB_REPO   = "https://github.com/tharindu899/aviator-apk"
 
 @Composable
 fun ProfileScreen(
@@ -30,18 +41,24 @@ fun ProfileScreen(
     onSaveSettings: (AppSettings) -> Unit,
     onSignOut: () -> Unit
 ) {
-    var displayName by remember(state.user) { mutableStateOf(state.user?.displayName ?: "") }
-    var editingName by remember { mutableStateOf(false) }
-    var settings by remember(state.settings) { mutableStateOf(state.settings) }
+    val context = LocalContext.current
+
+    var displayName       by remember(state.user) { mutableStateOf(state.user?.displayName ?: "") }
+    var editingName       by remember { mutableStateOf(false) }
+    var settings          by remember(state.settings) { mutableStateOf(state.settings) }
     var showSignOutDialog by remember { mutableStateOf(false) }
 
-    // Compute live stats from actual signal list — never trust stale profile fields
+    // Live stats
     val totalSignals = state.signals.size
     val totalWins    = state.signals.count { it.status == SignalStatus.WIN }
     val totalLosses  = state.signals.count { it.status == SignalStatus.LOSS }
     val totalMissed  = state.signals.count { it.status == SignalStatus.MISSED }
     val completed    = totalWins + totalLosses
     val winRate      = if (completed > 0) (totalWins * 100) / completed else 0
+
+    fun openUrl(url: String) {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    }
 
     Column(
         modifier = Modifier
@@ -50,17 +67,14 @@ fun ProfileScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+
         // ── Profile header ─────────────────────────────────────────────────
         GradientCard {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth().padding(8.dp)
             ) {
-                UserAvatar(
-                    photoUrl    = state.user?.photoUrl,
-                    displayName = state.user?.displayName ?: "",
-                    size        = 80.dp
-                )
+                UserAvatar(photoUrl = state.user?.photoUrl, displayName = state.user?.displayName ?: "", size = 80.dp)
                 Spacer(modifier = Modifier.height(12.dp))
 
                 if (editingName) {
@@ -81,17 +95,12 @@ fun ProfileScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
-                            onClick = {
-                                editingName = false
-                                displayName = state.user?.displayName ?: ""
-                            },
-                            shape = RoundedCornerShape(10.dp)
+                            onClick = { editingName = false; displayName = state.user?.displayName ?: "" },
+                            shape   = RoundedCornerShape(10.dp)
                         ) { Text("Cancel", color = Color(0xFF94A3B8)) }
                         Button(
                             onClick = {
-                                state.user?.let { u ->
-                                    onSaveProfile(u.copy(displayName = displayName))
-                                }
+                                state.user?.let { u -> onSaveProfile(u.copy(displayName = displayName)) }
                                 editingName = false
                             },
                             shape  = RoundedCornerShape(10.dp),
@@ -99,12 +108,7 @@ fun ProfileScreen(
                         ) { Text("Save") }
                     }
                 } else {
-                    Text(
-                        state.user?.displayName ?: "User",
-                        color      = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize   = 22.sp
-                    )
+                    Text(state.user?.displayName ?: "User", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(state.user?.email ?: "", color = Color(0xFF94A3B8), fontSize = 14.sp)
                     Spacer(modifier = Modifier.height(10.dp))
@@ -122,11 +126,8 @@ fun ProfileScreen(
             }
         }
 
-        // ── Live stats grid ────────────────────────────────────────────────
-        Row(
-            modifier              = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+        // ── Stats grid ─────────────────────────────────────────────────────
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(
                 Triple("Signals", totalSignals.toString(), BrandPurple),
                 Triple("Wins",    totalWins.toString(),    GreenActive),
@@ -151,22 +152,19 @@ fun ProfileScreen(
             Text("Account Information", color = BrandPurple, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             Spacer(modifier = Modifier.height(12.dp))
             listOf(
-                Triple(Icons.Filled.CalendarToday,    "Member Since",   Formatters.formatDate(state.user?.createdAt  ?: System.currentTimeMillis())),
-                Triple(Icons.Filled.Login,            "Last Login",     Formatters.formatDate(state.user?.lastLoginAt ?: System.currentTimeMillis())),
-                Triple(Icons.Filled.SignalCellularAlt,"Total Signals",  totalSignals.toString()),
-                Triple(Icons.Filled.EmojiEvents,      "Total Wins",     totalWins.toString()),
-                Triple(Icons.Filled.Cancel,           "Total Losses",   totalLosses.toString()),
-                Triple(Icons.Filled.NotInterested,    "Missed",         totalMissed.toString())
+                Triple(Icons.Filled.CalendarToday,     "Member Since",  Formatters.formatDate(state.user?.createdAt  ?: System.currentTimeMillis())),
+                Triple(Icons.Filled.Login,             "Last Login",    Formatters.formatDate(state.user?.lastLoginAt ?: System.currentTimeMillis())),
+                Triple(Icons.Filled.SignalCellularAlt, "Total Signals", totalSignals.toString()),
+                Triple(Icons.Filled.EmojiEvents,       "Total Wins",    totalWins.toString()),
+                Triple(Icons.Filled.Cancel,            "Total Losses",  totalLosses.toString()),
+                Triple(Icons.Filled.NotInterested,     "Missed",        totalMissed.toString())
             ).forEachIndexed { index, (icon, label, value) ->
                 Row(
                     modifier              = Modifier.fillMaxWidth().padding(vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment     = Alignment.CenterVertically
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment     = Alignment.CenterVertically
-                    ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(icon, null, tint = BrandPurple.copy(0.7f), modifier = Modifier.size(18.dp))
                         Text(label, color = Color(0xFF94A3B8), fontSize = 14.sp)
                     }
@@ -180,42 +178,17 @@ fun ProfileScreen(
         GradientCard {
             Text("App Settings", color = BrandPurple, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             Spacer(modifier = Modifier.height(12.dp))
-
-            SettingToggle(
-                icon        = Icons.Filled.Notifications,
-                label       = "Notifications",
-                description = "Signal alerts in notification shade",
-                checked     = settings.notifications
-            ) {
-                settings = settings.copy(notifications = !settings.notifications)
-                onSaveSettings(settings)
+            SettingToggle(Icons.Filled.Notifications, "Notifications", "Signal alerts in notification shade", settings.notifications) {
+                settings = settings.copy(notifications = !settings.notifications); onSaveSettings(settings)
             }
-            SettingToggle(
-                icon        = Icons.Filled.VolumeUp,
-                label       = "Sound Effects",
-                description = "Play sound when bet window opens",
-                checked     = settings.sound
-            ) {
-                settings = settings.copy(sound = !settings.sound)
-                onSaveSettings(settings)
+            SettingToggle(Icons.Filled.VolumeUp, "Sound Effects", "Play sound when bet window opens", settings.sound) {
+                settings = settings.copy(sound = !settings.sound); onSaveSettings(settings)
             }
-            SettingToggle(
-                icon        = Icons.Filled.AlarmOff,
-                label       = "Auto-mark Missed",
-                description = "Mark expired signals automatically",
-                checked     = settings.autoMarkMissed
-            ) {
-                settings = settings.copy(autoMarkMissed = !settings.autoMarkMissed)
-                onSaveSettings(settings)
+            SettingToggle(Icons.Filled.AlarmOff, "Auto-mark Missed", "Mark expired signals automatically", settings.autoMarkMissed) {
+                settings = settings.copy(autoMarkMissed = !settings.autoMarkMissed); onSaveSettings(settings)
             }
-            SettingToggle(
-                icon        = Icons.Filled.Timer,
-                label       = "Show Countdown",
-                description = "Live countdown timers on signals",
-                checked     = settings.showCountdown
-            ) {
-                settings = settings.copy(showCountdown = !settings.showCountdown)
-                onSaveSettings(settings)
+            SettingToggle(Icons.Filled.Timer, "Show Countdown", "Live countdown timers on signals", settings.showCountdown) {
+                settings = settings.copy(showCountdown = !settings.showCountdown); onSaveSettings(settings)
             }
         }
 
@@ -228,10 +201,7 @@ fun ProfileScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment     = Alignment.CenterVertically
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment     = Alignment.CenterVertically
-                ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.CloudSync, null, tint = BrandPurple, modifier = Modifier.size(20.dp))
                     Column {
                         Text("Google Drive", color = Color.White, fontWeight = FontWeight.Medium, fontSize = 14.sp)
@@ -239,6 +209,125 @@ fun ProfileScreen(
                     }
                 }
                 SyncStatusPill(state.syncStatus)
+            }
+        }
+
+        // ── Developer / About ──────────────────────────────────────────────
+        GradientCard {
+            Text("Developer", color = BrandPurple, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Developer row
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment     = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Brush.linearGradient(listOf(BrandPurple, BrandPink))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("T", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                }
+                Column {
+                    Text("Tharindu", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("@tharindu899", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                }
+            }
+
+            HorizontalDivider(color = Color(0x22FFFFFF), thickness = 0.5.dp)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // GitHub button
+            LinkButton(
+                icon    = Icons.Filled.Code,
+                label   = "GitHub",
+                subtext = "github.com/tharindu899",
+                color   = Color(0xFF6E40C9),
+                onClick = { openUrl(GITHUB_URL) }
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Source repo button
+            LinkButton(
+                icon    = Icons.Filled.FolderOpen,
+                label   = "App Repository",
+                subtext = "github.com/tharindu899/aviator-apk",
+                color   = Color(0xFF238636),
+                onClick = { openUrl(GITHUB_REPO) }
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Portfolio button
+            LinkButton(
+                icon    = Icons.Filled.Language,
+                label   = "Portfolio",
+                subtext = "web.toxybox99.eu.org",
+                color   = BlueInfo,
+                onClick = { openUrl(PORTFOLIO_URL) }
+            )
+        }
+
+        // ── App version card ───────────────────────────────────────────────
+        GradientCard {
+            Row(
+                modifier              = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment     = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Brush.linearGradient(listOf(BrandPurple, BrandPink))),
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Filled.Info, null, tint = Color.White, modifier = Modifier.size(18.dp)) }
+                    Column {
+                        Text("Aviator Predictor", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text("Version ${BuildConfig.VERSION_NAME}", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                    }
+                }
+                // Version badge pill
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Brush.linearGradient(listOf(BrandPurple.copy(0.3f), BrandPink.copy(0.3f))))
+                        .border(1.dp, BrandPurple.copy(0.5f), RoundedCornerShape(20.dp))
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        "v${BuildConfig.VERSION_NAME}",
+                        color      = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize   = 13.sp
+                    )
+                }
+            }
+
+            if (state.updateInfo != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                        .background(OrangeWaiting.copy(alpha = 0.1f))
+                        .border(1.dp, OrangeWaiting.copy(0.3f), RoundedCornerShape(10.dp))
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment     = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Filled.SystemUpdateAlt, null, tint = OrangeWaiting, modifier = Modifier.size(16.dp))
+                    Text(
+                        "v${state.updateInfo.latestVersion} is available",
+                        color    = OrangeWaiting,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
 
@@ -277,9 +366,49 @@ fun ProfileScreen(
     }
 }
 
+// ── Link button component ─────────────────────────────────────────────────────
+
+@Composable
+private fun LinkButton(
+    icon: ImageVector,
+    label: String,
+    subtext: String,
+    color: Color,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(color.copy(alpha = 0.08f))
+            .border(1.dp, color.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment     = Alignment.CenterVertically
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(color.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) { Icon(icon, null, tint = color, modifier = Modifier.size(18.dp)) }
+            Column {
+                Text(label, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Text(subtext, color = Color(0xFF64748B), fontSize = 11.sp)
+            }
+        }
+        Icon(Icons.Filled.OpenInNew, null, tint = color.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
+    }
+}
+
+// ── Setting toggle ─────────────────────────────────────────────────────────────
+
 @Composable
 private fun SettingToggle(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     label: String,
     description: String,
     checked: Boolean,
@@ -296,21 +425,18 @@ private fun SettingToggle(
             modifier              = Modifier.weight(1f)
         ) {
             Box(
-                modifier        = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp))
-                    .background(BrandPurple.copy(0.15f)),
+                modifier         = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(BrandPurple.copy(0.15f)),
                 contentAlignment = Alignment.Center
-            ) {
-                Icon(icon, null, tint = BrandPurple, modifier = Modifier.size(18.dp))
-            }
+            ) { Icon(icon, null, tint = BrandPurple, modifier = Modifier.size(18.dp)) }
             Column {
                 Text(label, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 14.sp)
                 Text(description, color = Color(0xFF64748B), fontSize = 12.sp)
             }
         }
         Switch(
-            checked        = checked,
+            checked         = checked,
             onCheckedChange = { onToggle() },
-            colors         = SwitchDefaults.colors(
+            colors          = SwitchDefaults.colors(
                 checkedThumbColor   = Color.White,
                 checkedTrackColor   = GreenActive,
                 uncheckedThumbColor = Color.White,
