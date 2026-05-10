@@ -64,6 +64,25 @@ jobs:
           sed -i 's|YOUR_WEB_CLIENT_ID_HERE.apps.googleusercontent.com|${{ secrets.GOOGLE_WEB_CLIENT_ID }}|g' \
             app/build.gradle.kts
 
+      # ── 7b. Sync versionName from tag ─────────────────────────────────────────
+      - name: Update versionName from tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ -n "${{ github.event.inputs.version_name }}" ]]; then
+            VERSION="${{ github.event.inputs.version_name }}"
+          else
+            VERSION="dev-build"
+          fi
+        
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            sed -i "s/versionName\s*=\s*\"[^\"]*\"/versionName = \"$VERSION\"/" \
+              app/build.gradle.kts
+            echo "versionName updated to: $VERSION"
+          else
+            echo "Skipping versionName update — '$VERSION' is not semver"
+          fi
+          
       # ── 8. Build release APK ──────────────────────────────────────────────
       - name: Build release APK
         env:
