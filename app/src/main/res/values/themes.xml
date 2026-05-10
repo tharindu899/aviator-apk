@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.AviatorPredictor" parent="android:Theme.Material.NoTitleBar">
+    <!--
+        Base activity theme for a Compose app.
+        - android:Theme.Material.Light.NoActionBar  ← correct API-21+ name
+        - statusBar / navigationBar set transparent so Compose draws edge-to-edge
+    -->
+    <style name="Theme.AviatorPredictor" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowBackground">@android:color/black</item>
     </style>
 
-    <!-- Splash screen theme -->
+    <!-- Splash screen theme (requires androidx.core:core-splashscreen) -->
     <style name="Theme.AviatorPredictor.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">#0F172A</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
