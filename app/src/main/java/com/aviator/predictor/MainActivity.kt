@@ -132,21 +132,9 @@ fun AviatorApp(
         return
     }
 
-    if (state.isLoading) {
-        Box(
-            modifier = Modifier.fillMaxSize().background(
-                Brush.verticalGradient(listOf(SlateBackground, Color(0xFF3B0764), SlateBackground))
-            ),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(color = BrandPurple)
-                Spacer(modifier = Modifier.height(16.dp))
-                Text("Loading your signals…", color = Color(0xFF94A3B8), fontSize = 14.sp)
-            }
-        }
-        return
-    }
+    // ── NO full-screen loading screen here any more.
+    // The refresh icon in the bottom bar spins while syncStatus == SYNCING,
+    // which is already set to SYNCING during loadAllData().
 
     var currentScreen by remember { mutableStateOf(Screen.HOME) }
 
@@ -200,6 +188,7 @@ fun AviatorApp(
                     winLossSignalId = winLossSignal?.signal?.id,
                     nextSignal      = state.upcomingSignals.firstOrNull(),
                     syncStatus      = state.syncStatus,
+                    isLoading       = state.isLoading,
                     onMarkWin       = onMarkWin,
                     onMarkLoss      = onMarkLoss,
                     hasUpdate       = state.updateInfo != null,
@@ -290,6 +279,7 @@ fun AppBottomBar(
     winLossSignalId: String?,
     nextSignal: com.aviator.predictor.utils.SignalWithWindow?,
     syncStatus: SyncStatus,
+    isLoading: Boolean,
     onMarkWin: (String) -> Unit,
     onMarkLoss: (String) -> Unit,
     hasUpdate: Boolean,
@@ -303,8 +293,9 @@ fun AppBottomBar(
         NavItem(Screen.PROFILE,  Icons.Filled.Person,    "Profile")
     )
 
-    // ── Spinning animation: active while syncStatus == SYNCING ────────────
-    val isSyncing = syncStatus == SyncStatus.SYNCING
+    // Spin whenever data is loading OR a background sync is running
+    val isBusy = isLoading || syncStatus == SyncStatus.SYNCING
+
     val infiniteTransition = rememberInfiniteTransition(label = "refresh_spin")
     val spinAngle by infiniteTransition.animateFloat(
         initialValue  = 0f,
@@ -365,7 +356,6 @@ fun AppBottomBar(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment     = Alignment.CenterVertically
             ) {
-                // Next signal info
                 if (nextSignal != null) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -391,30 +381,28 @@ fun AppBottomBar(
                     Text("No upcoming signals", color = Color(0xFF475569), fontSize = 11.sp)
                 }
 
-                // Right side: sync pill + spinning refresh button
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment     = Alignment.CenterVertically
                 ) {
                     SyncStatusPill(syncStatus)
 
-                    // Compact refresh button — icon spins when isSyncing,
-                    // tap is disabled while a sync is already in progress
+                    // Compact refresh button — spins while loading or syncing
                     Box(
                         modifier = Modifier
                             .size(28.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(
-                                if (isSyncing) BrandPurple.copy(alpha = 0.25f)
-                                else           BrandPurple.copy(alpha = 0.15f)
+                                if (isBusy) BrandPurple.copy(alpha = 0.25f)
+                                else        BrandPurple.copy(alpha = 0.15f)
                             )
                             .border(
                                 1.dp,
-                                if (isSyncing) BrandPurple.copy(alpha = 0.6f)
-                                else           BrandPurple.copy(alpha = 0.3f),
+                                if (isBusy) BrandPurple.copy(alpha = 0.6f)
+                                else        BrandPurple.copy(alpha = 0.3f),
                                 RoundedCornerShape(8.dp)
                             )
-                            .clickable(enabled = !isSyncing) { onRetrySync() },
+                            .clickable(enabled = !isBusy) { onRetrySync() },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -423,7 +411,7 @@ fun AppBottomBar(
                             tint     = BrandPurple,
                             modifier = Modifier
                                 .size(15.dp)
-                                .rotate(if (isSyncing) spinAngle else 0f)
+                                .rotate(if (isBusy) spinAngle else 0f)
                         )
                     }
                 }
