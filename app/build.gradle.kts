@@ -5,34 +5,32 @@ plugins {
 }
 
 android {
-    namespace = "com.aviator.predictor"
+    namespace  = "com.aviator.predictor"
     compileSdk = 35
 
     defaultConfig {
         applicationId = "com.aviator.predictor"
-        minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "2.0.0"
+        minSdk        = 26
+        targetSdk     = 35
+        versionCode   = 1
+        versionName   = "2.0.0"
 
-        // Replace with your actual Web Client ID from Google Cloud Console
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"YOUR_WEB_CLIENT_ID_HERE.apps.googleusercontent.com\"")
     }
 
     signingConfigs {
         create("release") {
-            // These are injected by GitHub Actions via environment variables
-            storeFile = System.getenv("KEYSTORE_PATH")?.let { file(it) }
+            storeFile     = System.getenv("KEYSTORE_PATH")?.let { file(it) }
             storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
-            keyAlias = System.getenv("KEY_ALIAS") ?: ""
-            keyPassword = System.getenv("KEY_PASSWORD") ?: ""
+            keyAlias      = System.getenv("KEY_ALIAS") ?: ""
+            keyPassword   = System.getenv("KEY_PASSWORD") ?: ""
         }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled    = true
+            isShrinkResources  = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -41,7 +39,7 @@ android {
         }
         debug {
             applicationIdSuffix = ".debug"
-            isDebuggable = true
+            isDebuggable        = true
         }
     }
 
@@ -55,7 +53,7 @@ android {
     }
 
     buildFeatures {
-        compose = true
+        compose     = true
         buildConfig = true
     }
 }
@@ -64,6 +62,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)   // collectAsStateWithLifecycle
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
@@ -78,11 +77,11 @@ dependencies {
     implementation(libs.googleid)
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services.auth)
+    // Required for GoogleAuthUtil.getToken() — gets a real Drive OAuth access token
+    implementation(libs.play.services.auth)
     implementation(libs.gson)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.androidx.lifecycle.runtime.compose)
-    // Coil for async image loading (user avatars)
     implementation(libs.coil.compose)
     debugImplementation(libs.androidx.ui.tooling)
 }

@@ -1,5 +1,6 @@
 package com.aviator.predictor.ui
 
+import android.app.Activity
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -12,12 +13,12 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.util.*
 
-// ── UI State ─────────────────────────────────────────────────────────────────
+// ── UI State ──────────────────────────────────────────────────────────────────
 
 enum class SyncStatus { PENDING, SYNCING, SYNCED, OFFLINE, ERROR }
 
 data class AppUiState(
-    val isAuthLoading: Boolean = true,
+    val isAuthLoading: Boolean = false,   // false by default — no session to restore
     val isSignedIn: Boolean = false,
     val user: UserProfile? = null,
     val accessToken: String = "",
@@ -33,7 +34,7 @@ data class AppUiState(
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val authRepo = AuthRepository(application)
+    private val authRepo  = AuthRepository(application)
     private val driveRepo = DriveRepository(application)
 
     private val _state = MutableStateFlow(AppUiState())
@@ -43,23 +44,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var autoMarkJob: Job? = null
 
     init {
-        // No persistent session to restore — immediately show sign-in screen
-        _state.update { it.copy(isAuthLoading = false) }
         startAutoMarkMissed()
     }
 
     // ── Auth ──────────────────────────────────────────────────────────────
 
-    fun signIn() {
+    // Activity must be passed so Credential Manager can show the sign-in UI
+    fun signIn(activity: Activity) {
         viewModelScope.launch {
             _state.update { it.copy(isAuthLoading = true, error = null) }
-            val result = authRepo.signIn()
+            val result = authRepo.signIn(activity)
             if (result.success) {
                 _state.update {
                     it.copy(
-                        isSignedIn = true,
-                        user = result.profile,
-                        accessToken = result.token,
+                        isSignedIn   = true,
+                        user         = result.profile,
+                        accessToken  = result.token,
                         isAuthLoading = false
                     )
                 }
@@ -76,7 +76,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             authRepo.signOut()
             driveRepo.clearCache()
             refreshJob?.cancel()
-            _state.value = AppUiState(isAuthLoading = false)
+            _state.value = AppUiState()
         }
     }
 
@@ -85,29 +85,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun loadAllData(token: String) {
         _state.update { it.copy(isLoading = true, syncStatus = SyncStatus.SYNCING) }
         try {
-            val signals = driveRepo.loadSignals(token)
+            val signals  = driveRepo.loadSignals(token)
             val settings = driveRepo.loadSettings(token)
-            val profile = driveRepo.loadProfile(token)
-
+            val profile  = driveRepo.loadProfile(token)
             val computed = computeUpcoming(signals)
             _state.update {
                 it.copy(
-                    signals = signals,
-                    settings = settings,
-                    user = profile ?: it.user,
-                    isLoading = false,
-                    syncStatus = SyncStatus.SYNCED,
-                    upcomingSignals = computed.first,
-                    currentSignal = computed.second
+                    signals          = signals,
+                    settings         = settings,
+                    user             = profile ?: it.user,
+                    isLoading        = false,
+                    syncStatus       = SyncStatus.SYNCED,
+                    upcomingSignals  = computed.first,
+                    currentSignal    = computed.second
                 )
             }
         } catch (e: Exception) {
             _state.update {
-                it.copy(
-                    isLoading = false,
-                    syncStatus = SyncStatus.ERROR,
-                    error = e.message
-                )
+                it.copy(isLoading = false, syncStatus = SyncStatus.ERROR, error = e.message)
             }
         }
     }
@@ -126,13 +121,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val token = _state.value.accessToken
                 if (token.isNotBlank() && _state.value.syncStatus == SyncStatus.SYNCED) {
                     try {
-                        val signals = driveRepo.loadSignals(token)
+                        val signals  = driveRepo.loadSignals(token)
                         val computed = computeUpcoming(signals)
                         _state.update {
                             it.copy(
-                                signals = signals,
+                                signals         = signals,
                                 upcomingSignals = computed.first,
-                                currentSignal = computed.second
+                                currentSignal   = computed.second
                             )
                         }
                     } catch (_: Exception) {}
@@ -153,15 +148,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             _state.update { it.copy(isGenerating = true) }
 
-            val addTime = TimeCalculations.oddToTime(parsed.odd)
+            val addTime      = TimeCalculations.oddToTime(parsed.odd)
             val originalSecs = parsed.hour * 3600 + parsed.minute * 60 + parsed.second
-            val addSecs = addTime.hours * 3600 + addTime.minutes * 60 + addTime.seconds
-            var totalSecs = originalSecs + addSecs
-            val daysOffset = totalSecs / 86400
-            totalSecs %= 86400
+            val addSecs      = addTime.hours * 3600 + addTime.minutes * 60 + addTime.seconds
+            var totalSecs    = originalSecs + addSecs
+            val daysOffset   = totalSecs / 86400
+            totalSecs       %= 86400
 
             val resultTime = TimeObj(
-                hours = totalSecs / 3600,
+                hours   = totalSecs / 3600,
                 minutes = (totalSecs % 3600) / 60,
                 seconds = totalSecs % 60
             )
@@ -174,10 +169,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .format(it.time)
             }
 
-            // Duplicate check
             val exists = _state.value.signals.any { sig ->
-                sig.status == SignalStatus.PENDING &&
-                sig.resultTime == resultTime
+                sig.status == SignalStatus.PENDING && sig.resultTime == resultTime
             }
             if (exists) {
                 _state.update { it.copy(isGenerating = false) }
@@ -187,30 +180,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             val windowTimes = TimeCalculations.getBetWindowTimes(resultTime)
             val newSignal = Signal(
-                id = driveRepo.newSignalId(),
-                odd = parsed.odd,
+                id           = driveRepo.newSignalId(),
+                odd          = parsed.odd,
                 originalTime = TimeObj(parsed.hour, parsed.minute, parsed.second),
-                resultTime = resultTime,
-                resultDate = resultDate,
-                daysOffset = daysOffset,
-                status = SignalStatus.PENDING,
-                createdAt = System.currentTimeMillis(),
-                updatedAt = System.currentTimeMillis(),
-                windowTimes = windowTimes
+                resultTime   = resultTime,
+                resultDate   = resultDate,
+                daysOffset   = daysOffset,
+                status       = SignalStatus.PENDING,
+                createdAt    = System.currentTimeMillis(),
+                updatedAt    = System.currentTimeMillis(),
+                windowTimes  = windowTimes
             )
 
             val token = _state.value.accessToken
-            val ok = driveRepo.addSignal(token, newSignal)
+            val ok    = driveRepo.addSignal(token, newSignal)
 
             if (ok) {
                 val newSignals = listOf(newSignal) + _state.value.signals
-                val computed = computeUpcoming(newSignals)
+                val computed   = computeUpcoming(newSignals)
                 _state.update {
                     it.copy(
-                        signals = newSignals,
-                        isGenerating = false,
+                        signals         = newSignals,
+                        isGenerating    = false,
                         upcomingSignals = computed.first,
-                        currentSignal = computed.second
+                        currentSignal   = computed.second
                     )
                 }
                 onResult(true, "Signal generated!")
@@ -225,18 +218,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateSignalStatus(signalId: String, status: SignalStatus) {
         viewModelScope.launch {
-            val token = _state.value.accessToken
+            val token   = _state.value.accessToken
             val updated = _state.value.signals.map {
-                if (it.id == signalId) it.copy(status = status, updatedAt = System.currentTimeMillis())
+                if (it.id == signalId)
+                    it.copy(status = status, updatedAt = System.currentTimeMillis())
                 else it
             }
             val computed = computeUpcoming(updated)
             _state.update {
-                it.copy(
-                    signals = updated,
-                    upcomingSignals = computed.first,
-                    currentSignal = computed.second
-                )
+                it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second)
             }
             driveRepo.updateSignalStatus(token, signalId, status)
         }
@@ -244,15 +234,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteSignal(signalId: String) {
         viewModelScope.launch {
-            val token = _state.value.accessToken
+            val token   = _state.value.accessToken
             val updated = _state.value.signals.filter { it.id != signalId }
             val computed = computeUpcoming(updated)
             _state.update {
-                it.copy(
-                    signals = updated,
-                    upcomingSignals = computed.first,
-                    currentSignal = computed.second
-                )
+                it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second)
             }
             driveRepo.deleteSignal(token, signalId)
         }
@@ -288,9 +274,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val current = _state.value
                 if (!current.isSignedIn || current.accessToken.isBlank()) continue
 
-                val toMark = current.signals.filter {
-                    TimeCalculations.shouldMarkAsMissed(it)
-                }
+                val toMark = current.signals.filter { TimeCalculations.shouldMarkAsMissed(it) }
                 if (toMark.isNotEmpty()) {
                     val updates = toMark.associate { it.id to SignalStatus.MISSED }
                     val updated = current.signals.map { sig ->
@@ -300,22 +284,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     val computed = computeUpcoming(updated)
                     _state.update {
-                        it.copy(
-                            signals = updated,
-                            upcomingSignals = computed.first,
-                            currentSignal = computed.second
-                        )
+                        it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second)
                     }
                     driveRepo.batchUpdateStatus(current.accessToken, updates)
                 }
 
-                // Also recompute upcoming every tick to keep countdowns live
                 val recomputed = computeUpcoming(current.signals)
                 _state.update {
-                    it.copy(
-                        upcomingSignals = recomputed.first,
-                        currentSignal = recomputed.second
-                    )
+                    it.copy(upcomingSignals = recomputed.first, currentSignal = recomputed.second)
                 }
             }
         }
@@ -324,19 +300,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ── Stats ─────────────────────────────────────────────────────────────
 
     fun getStats(): Stats {
-        val signals = _state.value.signals
-        val total = signals.size
+        val signals    = _state.value.signals
+        val total      = signals.size
         val todayStart = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            set(Calendar.SECOND, 0);      set(Calendar.MILLISECOND, 0)
         }.timeInMillis
-        val today = signals.count { it.createdAt >= todayStart }
-        val wins = signals.count { it.status == SignalStatus.WIN }
-        val losses = signals.count { it.status == SignalStatus.LOSS }
-        val missed = signals.count { it.status == SignalStatus.MISSED }
-        val pending = signals.count { it.status == SignalStatus.PENDING }
+        val today     = signals.count { it.createdAt >= todayStart }
+        val wins      = signals.count { it.status == SignalStatus.WIN }
+        val losses    = signals.count { it.status == SignalStatus.LOSS }
+        val missed    = signals.count { it.status == SignalStatus.MISSED }
+        val pending   = signals.count { it.status == SignalStatus.PENDING }
         val completed = wins + losses
-        val winRate = if (completed > 0) (wins * 100) / completed else 0
+        val winRate   = if (completed > 0) (wins * 100) / completed else 0
         return Stats(total, today, wins, losses, missed, pending, winRate, completed)
     }
 
@@ -344,7 +320,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun computeUpcoming(signals: List<Signal>): Pair<List<SignalWithWindow>, SignalWithWindow?> {
         val upcoming = TimeCalculations.getUpcomingSignals(signals)
-        val current = TimeCalculations.getCurrentSignal(upcoming)
+        val current  = TimeCalculations.getCurrentSignal(upcoming)
         return Pair(upcoming, current)
     }
 

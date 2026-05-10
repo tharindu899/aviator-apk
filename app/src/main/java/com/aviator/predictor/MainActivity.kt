@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -33,7 +34,6 @@ import com.aviator.predictor.ui.components.*
 import com.aviator.predictor.ui.screens.*
 import com.aviator.predictor.ui.theme.*
 import com.aviator.predictor.utils.Formatters
-import com.aviator.predictor.utils.TimeCalculations
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -49,27 +49,31 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Keep splash screen until auth check is done
+        // Splash stays until auth check is done (isAuthLoading starts false now,
+        // so this resolves immediately and shows the sign-in screen)
         splashScreen.setKeepOnScreenCondition {
             viewModel.state.value.isAuthLoading
         }
 
         setContent {
             AviatorPredictorTheme {
-                val state by viewModel.state.collectAsStateWithLifecycle()
+                val state   by viewModel.state.collectAsStateWithLifecycle()
+                // Capture the Activity here so Composables can pass it to signIn()
+                val activity = LocalContext.current as ComponentActivity
+
                 AviatorApp(
-                    state = state,
-                    onSignIn = { viewModel.signIn() },
-                    onSignOut = { viewModel.signOut() },
-                    onGenerate = { input, callback -> viewModel.generateSignal(input, callback) },
-                    onMarkWin = { id -> viewModel.updateSignalStatus(id, SignalStatus.WIN) },
-                    onMarkLoss = { id -> viewModel.updateSignalStatus(id, SignalStatus.LOSS) },
-                    onReset = { id -> viewModel.updateSignalStatus(id, SignalStatus.PENDING) },
-                    onDelete = { id -> viewModel.deleteSignal(id) },
-                    onSaveProfile = { profile -> viewModel.saveProfile(profile) },
+                    state          = state,
+                    onSignIn       = { viewModel.signIn(activity) },
+                    onSignOut      = { viewModel.signOut() },
+                    onGenerate     = { input, cb -> viewModel.generateSignal(input, cb) },
+                    onMarkWin      = { id -> viewModel.updateSignalStatus(id, SignalStatus.WIN) },
+                    onMarkLoss     = { id -> viewModel.updateSignalStatus(id, SignalStatus.LOSS) },
+                    onReset        = { id -> viewModel.updateSignalStatus(id, SignalStatus.PENDING) },
+                    onDelete       = { id -> viewModel.deleteSignal(id) },
+                    onSaveProfile  = { profile -> viewModel.saveProfile(profile) },
                     onSaveSettings = { settings -> viewModel.saveSettings(settings) },
-                    onRetrySync = { viewModel.retrySync() },
-                    getStats = { viewModel.getStats() }
+                    onRetrySync    = { viewModel.retrySync() },
+                    getStats       = { viewModel.getStats() }
                 )
             }
         }
@@ -108,8 +112,8 @@ fun AviatorApp(
     if (!state.isSignedIn) {
         SignInScreen(
             isLoading = state.isAuthLoading,
-            error = state.error,
-            onSignIn = onSignIn
+            error     = state.error,
+            onSignIn  = onSignIn
         )
         return
     }
@@ -119,7 +123,9 @@ fun AviatorApp(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(SlateBackground, Color(0xFF3B0764), SlateBackground))),
+                .background(
+                    Brush.verticalGradient(listOf(SlateBackground, Color(0xFF3B0764), SlateBackground))
+                ),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -132,6 +138,7 @@ fun AviatorApp(
     }
 
     var currentScreen by remember { mutableStateOf(Screen.HOME) }
+
     // Live clock
     var currentTime by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
@@ -141,7 +148,7 @@ fun AviatorApp(
         }
     }
 
-    // Win/Loss bar visibility: show when a signal is within active/grace/win-loss window
+    // Win/Loss bar — show when a signal is in its active/grace window
     val showWinLossBar by remember(state.upcomingSignals) {
         derivedStateOf {
             state.upcomingSignals.any { sw ->
@@ -159,21 +166,21 @@ fun AviatorApp(
         containerColor = SlateBackground,
         topBar = {
             AppTopBar(
-                state = state,
+                state       = state,
                 currentTime = currentTime,
                 onRetrySync = onRetrySync
             )
         },
         bottomBar = {
             AppBottomBar(
-                currentScreen = currentScreen,
-                onScreenChange = { currentScreen = it },
-                showWinLossBar = showWinLossBar && currentScreen != Screen.GENERATE,
-                winLossSignalId = winLossSignal?.signal?.id,
-                nextSignal = state.upcomingSignals.firstOrNull(),
-                syncStatus = state.syncStatus,
-                onMarkWin = onMarkWin,
-                onMarkLoss = onMarkLoss
+                currentScreen    = currentScreen,
+                onScreenChange   = { currentScreen = it },
+                showWinLossBar   = showWinLossBar && currentScreen != Screen.GENERATE,
+                winLossSignalId  = winLossSignal?.signal?.id,
+                nextSignal       = state.upcomingSignals.firstOrNull(),
+                syncStatus       = state.syncStatus,
+                onMarkWin        = onMarkWin,
+                onMarkLoss       = onMarkLoss
             )
         }
     ) { padding ->
@@ -184,27 +191,27 @@ fun AviatorApp(
         ) {
             when (currentScreen) {
                 Screen.HOME -> HomeScreen(
-                    state = state,
-                    onMarkWin = onMarkWin,
-                    onMarkLoss = onMarkLoss,
+                    state             = state,
+                    onMarkWin         = onMarkWin,
+                    onMarkLoss        = onMarkLoss,
                     onNavigateGenerate = { currentScreen = Screen.GENERATE }
                 )
                 Screen.GENERATE -> GenerateScreen(
                     isGenerating = state.isGenerating,
-                    onGenerate = onGenerate
+                    onGenerate   = onGenerate
                 )
                 Screen.RESULTS -> ResultsScreen(
-                    signals = state.signals,
-                    onMarkWin = onMarkWin,
+                    signals    = state.signals,
+                    onMarkWin  = onMarkWin,
                     onMarkLoss = onMarkLoss,
-                    onReset = onReset,
-                    onDelete = onDelete
+                    onReset    = onReset,
+                    onDelete   = onDelete
                 )
                 Screen.PROFILE -> ProfileScreen(
-                    state = state,
-                    onSaveProfile = onSaveProfile,
+                    state          = state,
+                    onSaveProfile  = onSaveProfile,
                     onSaveSettings = onSaveSettings,
-                    onSignOut = onSignOut
+                    onSignOut      = onSignOut
                 )
             }
         }
@@ -229,7 +236,10 @@ fun AppTopBar(
             containerColor = SlateSurface.copy(alpha = 0.95f)
         ),
         title = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Box(
                     modifier = Modifier
                         .size(32.dp)
@@ -246,7 +256,6 @@ fun AppTopBar(
             }
         },
         actions = {
-            // Live clock
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
@@ -263,11 +272,10 @@ fun AppTopBar(
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
-            // User avatar
             UserAvatar(
-                photoUrl = state.user?.photoUrl,
+                photoUrl    = state.user?.photoUrl,
                 displayName = state.user?.displayName ?: "",
-                size = 36.dp
+                size        = 36.dp
             )
             Spacer(modifier = Modifier.width(12.dp))
         }
@@ -290,22 +298,22 @@ fun AppBottomBar(
     onMarkLoss: (String) -> Unit
 ) {
     val navItems = listOf(
-        NavItem(Screen.HOME, Icons.Filled.Home, "Home"),
+        NavItem(Screen.HOME,     Icons.Filled.Home,     "Home"),
         NavItem(Screen.GENERATE, Icons.Filled.PlayArrow, "Generate"),
-        NavItem(Screen.RESULTS, Icons.Filled.BarChart, "Results"),
-        NavItem(Screen.PROFILE, Icons.Filled.Person, "Profile")
+        NavItem(Screen.RESULTS,  Icons.Filled.BarChart,  "Results"),
+        NavItem(Screen.PROFILE,  Icons.Filled.Person,    "Profile")
     )
 
     Surface(
-        color = SlateSurface.copy(alpha = 0.97f),
+        color         = SlateSurface.copy(alpha = 0.97f),
         tonalElevation = 8.dp
     ) {
         Column {
             // Win/Loss quick bar
             AnimatedVisibility(
                 visible = showWinLossBar && winLossSignalId != null,
-                enter = fadeIn(),
-                exit = fadeOut()
+                enter   = fadeIn(),
+                exit    = fadeOut()
             ) {
                 Row(
                     modifier = Modifier
@@ -315,21 +323,21 @@ fun AppBottomBar(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Button(
-                        onClick = { winLossSignalId?.let { onMarkWin(it) } },
+                        onClick  = { winLossSignalId?.let { onMarkWin(it) } },
                         modifier = Modifier.weight(1f).height(44.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = GreenActive.copy(alpha = 0.25f)),
-                        border = ButtonDefaults.outlinedButtonBorder
+                        shape    = RoundedCornerShape(12.dp),
+                        colors   = ButtonDefaults.buttonColors(containerColor = GreenActive.copy(alpha = 0.25f)),
+                        border   = ButtonDefaults.outlinedButtonBorder
                     ) {
                         Icon(Icons.Filled.CheckCircle, null, tint = GreenActive, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("WIN", color = GreenActive, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     }
                     Button(
-                        onClick = { winLossSignalId?.let { onMarkLoss(it) } },
+                        onClick  = { winLossSignalId?.let { onMarkLoss(it) } },
                         modifier = Modifier.weight(1f).height(44.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = RedClosed.copy(alpha = 0.25f))
+                        shape    = RoundedCornerShape(12.dp),
+                        colors   = ButtonDefaults.buttonColors(containerColor = RedClosed.copy(alpha = 0.25f))
                     ) {
                         Icon(Icons.Filled.Cancel, null, tint = RedClosed, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
@@ -345,12 +353,12 @@ fun AppBottomBar(
                     .background(Color(0x22334155))
                     .padding(horizontal = 16.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment     = Alignment.CenterVertically
             ) {
                 if (nextSignal != null) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment     = Alignment.CenterVertically
                     ) {
                         Text("Next:", color = Color(0xFF94A3B8), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         Text(
@@ -362,11 +370,7 @@ fun AppBottomBar(
                             "(${String.format("%.2f", nextSignal.signal.odd)}x)",
                             color = Color(0xFF64748B), fontSize = 11.sp
                         )
-                        val cdColor = when {
-                            nextSignal.countdown <= 0 -> GreenActive
-                            nextSignal.countdown <= 45 -> YellowGrace
-                            else -> GreenActive
-                        }
+                        val cdColor = if (nextSignal.countdown <= 0) GreenActive else GreenActive
                         Text(
                             Formatters.formatCountdown(nextSignal.countdown),
                             color = cdColor, fontWeight = FontWeight.Bold, fontSize = 12.sp
@@ -381,16 +385,16 @@ fun AppBottomBar(
             // Tab row
             NavigationBar(
                 containerColor = Color.Transparent,
-                contentColor = Color.White,
+                contentColor   = Color.White,
                 tonalElevation = 0.dp,
-                modifier = Modifier.height(64.dp)
+                modifier       = Modifier.height(64.dp)
             ) {
                 navItems.forEach { item ->
                     val selected = currentScreen == item.screen
                     NavigationBarItem(
                         selected = selected,
-                        onClick = { onScreenChange(item.screen) },
-                        icon = {
+                        onClick  = { onScreenChange(item.screen) },
+                        icon     = {
                             Icon(
                                 item.icon,
                                 contentDescription = item.label,
@@ -400,14 +404,14 @@ fun AppBottomBar(
                         label = {
                             Text(
                                 item.label,
-                                fontSize = 10.sp,
+                                fontSize   = 10.sp,
                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
                             )
                         },
                         colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = BrandPurple,
-                            selectedTextColor = BrandPurple,
-                            indicatorColor = BrandPurple.copy(alpha = 0.15f),
+                            selectedIconColor   = BrandPurple,
+                            selectedTextColor   = BrandPurple,
+                            indicatorColor      = BrandPurple.copy(alpha = 0.15f),
                             unselectedIconColor = Color(0xFF64748B),
                             unselectedTextColor = Color(0xFF64748B)
                         )

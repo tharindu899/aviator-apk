@@ -11,9 +11,6 @@ on:
         required: false
         default: 'dev-build'
 
-permissions:
-  contents: write
-
 jobs:
   build-apk:
     name: Build Signed APK
@@ -40,12 +37,12 @@ jobs:
       - name: Bootstrap Gradle Wrapper JAR
         run: |
           if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
-            echo "gradle-wrapper.jar not found — generating via system gradle..."
+            echo "gradle-wrapper.jar not found — generating..."
             sudo apt-get install -y gradle 2>/dev/null
             gradle wrapper --gradle-version 8.7 --distribution-type bin
-            echo "✅ gradle-wrapper.jar generated"
+            echo "gradle-wrapper.jar generated"
           else
-            echo "✅ gradle-wrapper.jar already present"
+            echo "gradle-wrapper.jar already present"
           fi
 
       # ── 5. Gradle wrapper permissions ─────────────────────────────────────
@@ -56,9 +53,8 @@ jobs:
       - name: Decode keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > $RUNNER_TEMP/release.jks
-          echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> $GITHUB_ENV
 
-      # ── 7. Inject Web Client ID ───────────────────────────────────────────
+      # ── 7. Inject Google Web Client ID ────────────────────────────────────
       - name: Inject Google Web Client ID
         run: |
           sed -i 's|YOUR_WEB_CLIENT_ID_HERE.apps.googleusercontent.com|${{ secrets.GOOGLE_WEB_CLIENT_ID }}|g' \
@@ -67,32 +63,31 @@ jobs:
       # ── 8. Build release APK ──────────────────────────────────────────────
       - name: Build release APK
         env:
-          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
+          KEYSTORE_PATH: ${{ runner.temp }}/release.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
-      # ── 9. Locate & rename APK ────────────────────────────────────────────
-      - name: Locate and rename APK
+      # ── 9. Rename APK ─────────────────────────────────────────────────────
+      - name: Rename APK
         id: apk
         run: |
-          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
-          echo "Found APK at: $APK_PATH"
+          SRC=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          echo "Source APK: $SRC"
 
-          # Determine version label
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            VERSION="${{ github.ref_name }}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
             VERSION="${{ github.event.inputs.version_name }}"
           fi
 
-          APK_NAME="AviatorPredictor-${VERSION}.apk"
-          cp "$APK_PATH" "$APK_NAME"
+          DEST="AviatorPredictor-${VERSION}.apk"
+          cp "$SRC" "$DEST"
+          echo "Renamed to: $DEST"
 
-          echo "apk_path=$APK_NAME" >> $GITHUB_OUTPUT
-          echo "version=$VERSION"   >> $GITHUB_OUTPUT
-          echo "APK renamed to: $APK_NAME"
+          echo "apk_path=$DEST" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       # ── 10. Upload APK as workflow artifact ───────────────────────────────
       - name: Upload APK artifact
@@ -102,37 +97,40 @@ jobs:
           path: ${{ steps.apk.outputs.apk_path }}
           retention-days: 30
 
-      # ── 11. Create GitHub Release (tag pushes only) ───────────────────────
+      # ── 11. Create GitHub Release via gh CLI (tag pushes only) ────────────
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: "Aviator Predictor ${{ github.ref_name }}"
-          body: |
-            ## Aviator Predictor ${{ github.ref_name }}
-
-            ### What's New
-            - Native Android app with Jetpack Compose
-            - Google Sign-In authentication
-            - All data synced to Google Drive (private appDataFolder)
-            - Full signal calculation matching web app algorithm
-            - Live countdown timers with 90-second bet window
-            - Win/Loss quick-mark bar in bottom navigation
-            - Auto-mark missed signals after grace period
-
-            ### Installation
-            1. Download `AviatorPredictor-${{ github.ref_name }}.apk`
-            2. On your Android device: Settings → Security → Allow unknown sources
-            3. Open the APK file and install
-            4. Sign in with your Google account
-
-            ### Requirements
-            - Android 8.0 (API 26) or higher
-            - Google account for sign-in and Drive sync
-          files: ${{ steps.apk.outputs.apk_path }}
-          draft: false
-          prerelease: false
-          fail_on_unmatched_files: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.apk.outputs.version }}"
+          APK="${{ steps.apk.outputs.apk_path }}"
+
+          echo "Creating release for tag: $VERSION"
+          echo "Attaching APK: $APK"
+
+          gh release create "$VERSION" "$APK" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Aviator Predictor $VERSION" \
+            --notes "## Aviator Predictor $VERSION
+
+          ### What's New
+          - Native Android app with Jetpack Compose
+          - Google Sign-In authentication
+          - All data synced to Google Drive (private appDataFolder)
+          - Full signal calculation matching web app algorithm
+          - Live countdown timers with 90-second bet window
+          - Win/Loss quick-mark bar in bottom navigation
+          - Auto-mark missed signals after grace period
+
+          ### Installation
+          1. Download AviatorPredictor-${VERSION}.apk
+          2. On your Android device: Settings > Security > Allow unknown sources
+          3. Open the APK file and install
+          4. Sign in with your Google account
+
+          ### Requirements
+          - Android 8.0 (API 26) or higher
+          - Google account for sign-in and Drive sync"
+
+          echo "Release created successfully"
