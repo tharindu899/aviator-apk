@@ -9,7 +9,7 @@ on:
       version_name:
         description: 'Version name (e.g. 2.0.1)'
         required: false
-        default: '2.0.'
+        default: '2.'
 
 # ── Explicit permissions required for gh release create ───────────────────────
 permissions:
