@@ -1,0 +1,31 @@
+# Android
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# Signing — NEVER commit keystores
+*.jks
+*.keystore
+
+# Generated
+app/build/
+
+# Env
+.env
+.env.local
+secrets.properties
+
+# Node (if web app lives alongside)
+node_modules/
+dist/
