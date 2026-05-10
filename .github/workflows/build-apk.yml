@@ -3,8 +3,8 @@ name: Build & Release APK
 on:
   push:
     tags:
-      - 'v*'           # triggers on any tag like v1.0.0, v2.1.3
-  workflow_dispatch:   # allows manual trigger from GitHub UI
+      - 'v*'
+  workflow_dispatch:
     inputs:
       version_name:
         description: 'Version name (e.g. 2.0.1)'
@@ -12,7 +12,7 @@ on:
         default: 'dev-build'
 
 permissions:
-  contents: write      # needed to create GitHub Release and upload APK
+  contents: write
 
 jobs:
   build-apk:
@@ -20,11 +20,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────
+      # ── 1. Checkout ───────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. JDK ───────────────────────────────────────────────────────────
+      # ── 2. JDK ────────────────────────────────────────────────────────────
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -32,13 +32,11 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # ── 3. Android SDK ───────────────────────────────────────────────────
+      # ── 3. Android SDK ────────────────────────────────────────────────────
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
       # ── 4. Bootstrap gradle-wrapper.jar if missing ────────────────────────
-      # The gradle-wrapper.jar must exist before ./gradlew can run.
-      # If it was not committed to the repo, generate it here via system gradle.
       - name: Bootstrap Gradle Wrapper JAR
         run: |
           if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
@@ -50,20 +48,17 @@ jobs:
             echo "✅ gradle-wrapper.jar already present"
           fi
 
-      # ── 5. Gradle wrapper permissions ───────────────────────────────────
+      # ── 5. Gradle wrapper permissions ─────────────────────────────────────
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      # ── 6. Decode keystore from secret ───────────────────────────────────
-      # Store your keystore as a base64 secret: KEYSTORE_BASE64
-      # Generate with: base64 -i your-keystore.jks | tr -d '\n'
+      # ── 6. Decode keystore ────────────────────────────────────────────────
       - name: Decode keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > $RUNNER_TEMP/release.jks
           echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> $GITHUB_ENV
 
       # ── 7. Inject Web Client ID ───────────────────────────────────────────
-      # Store your Google Web Client ID as secret: GOOGLE_WEB_CLIENT_ID
       - name: Inject Google Web Client ID
         run: |
           sed -i 's|YOUR_WEB_CLIENT_ID_HERE.apps.googleusercontent.com|${{ secrets.GOOGLE_WEB_CLIENT_ID }}|g' \
@@ -78,34 +73,41 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
-      # ── 9. Locate APK ────────────────────────────────────────────────────
-      - name: Find APK path
-        id: find-apk
+      # ── 9. Locate & rename APK ────────────────────────────────────────────
+      - name: Locate and rename APK
+        id: apk
         run: |
-          APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
-          echo "apk_path=$APK" >> $GITHUB_OUTPUT
-          echo "apk_name=AviatorPredictor-${{ github.ref_name }}.apk" >> $GITHUB_OUTPUT
-          echo "Found APK: $APK"
+          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          echo "Found APK at: $APK_PATH"
 
-      # ── 10. Rename APK ────────────────────────────────────────────────────
-      - name: Rename APK
-        run: |
-          cp "${{ steps.find-apk.outputs.apk_path }}" \
-             "${{ steps.find-apk.outputs.apk_name }}"
+          # Determine version label
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="${{ github.event.inputs.version_name }}"
+          fi
 
-      # ── 11. Upload APK as workflow artifact ───────────────────────────────
+          APK_NAME="AviatorPredictor-${VERSION}.apk"
+          cp "$APK_PATH" "$APK_NAME"
+
+          echo "apk_path=$APK_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION"   >> $GITHUB_OUTPUT
+          echo "APK renamed to: $APK_NAME"
+
+      # ── 10. Upload APK as workflow artifact ───────────────────────────────
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: aviator-apk
-          path: ${{ steps.find-apk.outputs.apk_name }}
+          path: ${{ steps.apk.outputs.apk_path }}
           retention-days: 30
 
-      # ── 12. Create GitHub Release (only on tag push) ──────────────────────
+      # ── 11. Create GitHub Release (tag pushes only) ───────────────────────
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           name: "Aviator Predictor ${{ github.ref_name }}"
           body: |
             ## Aviator Predictor ${{ github.ref_name }}
@@ -128,65 +130,9 @@ jobs:
             ### Requirements
             - Android 8.0 (API 26) or higher
             - Google account for sign-in and Drive sync
-
-            ### Setup Notes
-            Before this APK works you must:
-            - Configure a Google Cloud project with OAuth 2.0
-            - Enable the Google Drive API
-            - Add your SHA-1 fingerprint to the OAuth client
-          files: ${{ steps.find-apk.outputs.apk_name }}
+          files: ${{ steps.apk.outputs.apk_path }}
           draft: false
           prerelease: false
-
-      # ── 13. Upload to Google Drive (optional) ────────────────────────────
-      - name: Upload APK to Google Drive
-        if: startsWith(github.ref, 'refs/tags/') && env.GDRIVE_CREDENTIALS != ''
+          fail_on_unmatched_files: true
         env:
-          GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
-        run: |
-          echo "$GDRIVE_CREDENTIALS" | base64 --decode > /tmp/gdrive_creds.json
-
-          TOKEN=$(python3 -c "
-          import json, time, base64, hashlib, hmac
-          import urllib.request, urllib.parse
-
-          with open('/tmp/gdrive_creds.json') as f:
-              creds = json.load(f)
-
-          now = int(time.time())
-          payload = {
-              'iss': creds['client_email'],
-              'scope': 'https://www.googleapis.com/auth/drive.file',
-              'aud': 'https://oauth2.googleapis.com/token',
-              'iat': now,
-              'exp': now + 3600
-          }
-
-          import jwt
-          token = jwt.encode(payload, creds['private_key'], algorithm='RS256')
-
-          data = urllib.parse.urlencode({
-              'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-              'assertion': token
-          }).encode()
-
-          req = urllib.request.Request(
-              'https://oauth2.googleapis.com/token',
-              data=data, method='POST'
-          )
-          with urllib.request.urlopen(req) as r:
-              print(json.loads(r.read())['access_token'])
-          " 2>/dev/null || echo "")
-
-          if [ -n "$TOKEN" ] && [ -n "$GDRIVE_FOLDER_ID" ]; then
-            APK_FILE="${{ steps.find-apk.outputs.apk_name }}"
-            curl -s -X POST \
-              "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart" \
-              -H "Authorization: Bearer $TOKEN" \
-              -F "metadata={\"name\":\"$APK_FILE\",\"parents\":[\"$GDRIVE_FOLDER_ID\"]};type=application/json" \
-              -F "file=@$APK_FILE;type=application/vnd.android.package-archive"
-            echo "✅ APK uploaded to Google Drive"
-          else
-            echo "⚠️ Skipping Drive upload (missing token or folder ID)"
-          fi
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
