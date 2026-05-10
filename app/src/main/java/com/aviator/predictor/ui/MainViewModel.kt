@@ -24,7 +24,7 @@ import java.util.*
 enum class SyncStatus { PENDING, SYNCING, SYNCED, OFFLINE, ERROR }
 
 data class AppUiState(
-    val isAuthLoading: Boolean = false,
+    val isAuthLoading: Boolean = true,    // true on launch while session restores
     val isSignedIn: Boolean = false,
     val user: UserProfile? = null,
     val accessToken: String = "",
@@ -50,16 +50,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var syncJob: Job? = null        // 30 s – Drive pull
     private var autoMarkJob: Job? = null    // 3 s – missed detection + notifications
 
-    /**
-     * Tracks which signal IDs currently have an active notification shown,
-     * so we don't spam repeated notifications on every loop tick.
-     */
     private val notifiedSignalIds = mutableSetOf<String>()
 
     init {
         NotificationHelper.createChannel(application)
         startAutoMarkMissed()
         collectPendingActions()
+        // Try to restore the previous session silently.
+        // isAuthLoading = true keeps the splash screen on until we know the answer.
+        tryRestoreSession()
+    }
+
+    // ── Silent session restore (runs every cold start) ────────────────────
+
+    private fun tryRestoreSession() {
+        viewModelScope.launch {
+            val result = authRepo.tryRestoreSession()
+            if (result.success && result.profile != null) {
+                _state.update {
+                    it.copy(
+                        isSignedIn    = true,
+                        user          = result.profile,
+                        accessToken   = result.token,
+                        isAuthLoading = false
+                    )
+                }
+                loadAllData(result.token)
+                startCountdownUpdater()
+                startPeriodicSync()
+            } else {
+                // No saved session — show sign-in screen
+                _state.update { it.copy(isAuthLoading = false) }
+            }
+        }
     }
 
     // ── Auth ──────────────────────────────────────────────────────────────
@@ -68,7 +91,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _state.update { it.copy(isAuthLoading = true, error = null) }
             val result = authRepo.signIn(activity)
-            if (result.success) {
+            if (result.success && result.profile != null) {
                 _state.update {
                     it.copy(
                         isSignedIn    = true,
@@ -88,13 +111,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun signOut() {
         viewModelScope.launch {
-            authRepo.signOut()
+            authRepo.signOut()          // clears DataStore + credential state
             driveRepo.clearCache()
             countdownJob?.cancel()
             syncJob?.cancel()
             NotificationHelper.cancelAll(getApplication())
             notifiedSignalIds.clear()
-            _state.value = AppUiState()
+            _state.value = AppUiState(isAuthLoading = false)   // show sign-in immediately
         }
     }
 
@@ -119,7 +142,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         } catch (e: Exception) {
-            // Intentionally do NOT sign out on sync failure — token may just be slow
             _state.update {
                 it.copy(
                     isLoading  = false,
@@ -156,7 +178,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── 30-second Drive sync (pull fresh data from cloud) ────────────────
+    // ── 30-second Drive sync ──────────────────────────────────────────────
 
     private fun startPeriodicSync() {
         syncJob?.cancel()
@@ -177,7 +199,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 } catch (_: Exception) {
-                    // Silent — don't disrupt UI, just mark offline
                     _state.update { it.copy(syncStatus = SyncStatus.OFFLINE) }
                 }
             }
@@ -186,10 +207,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Notification action collection ────────────────────────────────────
 
-    /**
-     * Collects WIN / LOSS actions posted by [NotificationActionReceiver]
-     * and immediately updates signal status.
-     */
     private fun collectPendingActions() {
         viewModelScope.launch {
             PendingSignalAction.flow.collect { (signalId, status) ->
@@ -208,12 +225,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    /**
-     * Shows a persistent notification with WIN / LOSS action buttons when a
-     * signal enters its active bet window (countdown ≤ 45 s).
-     * Only plays sound on the FIRST notification for each signal;
-     * subsequent refreshes are silent so there's no noise every second.
-     */
     private fun syncNotifications(signals: List<Signal>) {
         if (!hasNotificationPermission()) return
         val context = getApplication<Application>()
@@ -235,11 +246,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val isFirstShow = !notifiedSignalIds.contains(signal.id)
                     val betWindow   = TimeCalculations.getBetWindowStatus(countdown)
                     NotificationHelper.showActiveNotification(
-                        context    = context,
-                        signal     = signal,
+                        context      = context,
+                        signal       = signal,
                         windowStatus = betWindow.status,
-                        countdown  = countdown,
-                        playSound  = isFirstShow      // ← sound only on entry
+                        countdown    = countdown,
+                        playSound    = isFirstShow
                     )
                     notifiedSignalIds.add(signal.id)
                 }
@@ -346,15 +357,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     currentSignal   = computed.second
                 )
             }
-            // Dismiss the notification for this signal immediately
             if (notifiedSignalIds.remove(signalId)) {
                 NotificationHelper.cancelNotification(getApplication(), signalId)
             }
-            // Fire-and-forget Drive save — don't block UI, don't sign out on failure
             if (token.isNotBlank()) {
-                launch {
-                    runCatching { driveRepo.updateSignalStatus(token, signalId, status) }
-                }
+                launch { runCatching { driveRepo.updateSignalStatus(token, signalId, status) } }
             }
         }
     }
@@ -395,6 +402,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun saveProfile(profile: UserProfile) {
         viewModelScope.launch {
             _state.update { it.copy(user = profile) }
+            // Keep DataStore name/photo in sync so restore shows correct info
+            launch { runCatching { authRepo.saveSession(profile) } }
             val token = _state.value.accessToken
             if (token.isNotBlank()) {
                 launch { runCatching { driveRepo.saveProfile(token, profile) } }
@@ -412,10 +421,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val current = _state.value
                 if (!current.isSignedIn || current.accessToken.isBlank()) continue
 
-                // 1. Sync notifications for pending signals
                 syncNotifications(current.signals)
 
-                // 2. Auto-mark missed
                 val toMark = current.signals.filter { TimeCalculations.shouldMarkAsMissed(it) }
                 if (toMark.isEmpty()) continue
 
@@ -442,11 +449,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         NotificationHelper.cancelNotification(getApplication(), sig.id)
                     }
                 }
-                // Persist without blocking UI; ignore errors
                 launch {
-                    runCatching {
-                        driveRepo.batchUpdateStatus(current.accessToken, updates)
-                    }
+                    runCatching { driveRepo.batchUpdateStatus(current.accessToken, updates) }
                 }
             }
         }
@@ -455,8 +459,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ── Stats ─────────────────────────────────────────────────────────────
 
     fun getStats(): Stats {
-        val signals   = _state.value.signals
-        val total     = signals.size
+        val signals    = _state.value.signals
+        val total      = signals.size
         val todayStart = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0);      set(Calendar.MILLISECOND, 0)
