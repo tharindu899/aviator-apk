@@ -1,14 +1,20 @@
 package com.aviator.predictor.ui
 
+import android.Manifest
 import android.app.Activity
 import android.app.Application
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aviator.predictor.data.models.*
 import com.aviator.predictor.data.repository.AuthRepository
 import com.aviator.predictor.data.repository.DriveRepository
-import com.aviator.predictor.utils.TimeCalculations
+import com.aviator.predictor.utils.NotificationHelper
+import com.aviator.predictor.utils.PendingSignalAction
 import com.aviator.predictor.utils.SignalWithWindow
+import com.aviator.predictor.utils.TimeCalculations
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.util.*
@@ -18,7 +24,7 @@ import java.util.*
 enum class SyncStatus { PENDING, SYNCING, SYNCED, OFFLINE, ERROR }
 
 data class AppUiState(
-    val isAuthLoading: Boolean = false,   // false by default — no session to restore
+    val isAuthLoading: Boolean = false,
     val isSignedIn: Boolean = false,
     val user: UserProfile? = null,
     val accessToken: String = "",
@@ -43,13 +49,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var refreshJob: Job? = null
     private var autoMarkJob: Job? = null
 
+    /**
+     * Tracks which signal IDs currently have an active notification shown,
+     * so we don't spam repeated notifications on every loop tick.
+     */
+    private val notifiedSignalIds = mutableSetOf<String>()
+
     init {
+        NotificationHelper.createChannel(application)
         startAutoMarkMissed()
+        collectPendingActions()
     }
 
     // ── Auth ──────────────────────────────────────────────────────────────
 
-    // Activity must be passed so Credential Manager can show the sign-in UI
     fun signIn(activity: Activity) {
         viewModelScope.launch {
             _state.update { it.copy(isAuthLoading = true, error = null) }
@@ -57,9 +70,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (result.success) {
                 _state.update {
                     it.copy(
-                        isSignedIn   = true,
-                        user         = result.profile,
-                        accessToken  = result.token,
+                        isSignedIn    = true,
+                        user          = result.profile,
+                        accessToken   = result.token,
                         isAuthLoading = false
                     )
                 }
@@ -76,6 +89,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             authRepo.signOut()
             driveRepo.clearCache()
             refreshJob?.cancel()
+            NotificationHelper.cancelAll(getApplication())
+            notifiedSignalIds.clear()
             _state.value = AppUiState()
         }
     }
@@ -91,13 +106,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val computed = computeUpcoming(signals)
             _state.update {
                 it.copy(
-                    signals          = signals,
-                    settings         = settings,
-                    user             = profile ?: it.user,
-                    isLoading        = false,
-                    syncStatus       = SyncStatus.SYNCED,
-                    upcomingSignals  = computed.first,
-                    currentSignal    = computed.second
+                    signals         = signals,
+                    settings        = settings,
+                    user            = profile ?: it.user,
+                    isLoading       = false,
+                    syncStatus      = SyncStatus.SYNCED,
+                    upcomingSignals = computed.first,
+                    currentSignal   = computed.second
                 )
             }
         } catch (e: Exception) {
@@ -136,6 +151,68 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── Notification action collection ────────────────────────────────────
+
+    /**
+     * Collects WIN / LOSS actions posted by [NotificationActionReceiver]
+     * and immediately updates signal status.
+     */
+    private fun collectPendingActions() {
+        viewModelScope.launch {
+            PendingSignalAction.flow.collect { (signalId, status) ->
+                updateSignalStatus(signalId, status)
+            }
+        }
+    }
+
+    // ── Notification management ───────────────────────────────────────────
+
+    private fun hasNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+        return ContextCompat.checkSelfPermission(
+            getApplication(),
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    /**
+     * Shows a persistent notification with WIN / LOSS action buttons when a
+     * signal enters its active bet window (countdown ≤ 45s).
+     * Cancels the notification once the signal is marked or the window closes.
+     */
+    private fun syncNotifications(signals: List<Signal>) {
+        if (!hasNotificationPermission()) return
+        val context = getApplication<Application>()
+
+        signals.forEach { signal ->
+            if (signal.status != SignalStatus.PENDING) {
+                // Resolved — dismiss any lingering notification
+                if (notifiedSignalIds.remove(signal.id)) {
+                    NotificationHelper.cancelNotification(context, signal.id)
+                }
+                return@forEach
+            }
+
+            val countdown   = TimeCalculations.getCountdown(signal)
+            val inWindow    = countdown <= 45 && countdown >= -45
+            val windowClosed = countdown < -45
+
+            when {
+                inWindow -> {
+                    // Show / refresh notification (refresh updates countdown text)
+                    val betWindow = TimeCalculations.getBetWindowStatus(countdown)
+                    NotificationHelper.showActiveNotification(
+                        context, signal, betWindow.status, countdown
+                    )
+                    notifiedSignalIds.add(signal.id)
+                }
+                windowClosed && notifiedSignalIds.remove(signal.id) -> {
+                    NotificationHelper.cancelNotification(context, signal.id)
+                }
+            }
+        }
+    }
+
     // ── Signal generation ─────────────────────────────────────────────────
 
     fun generateSignal(input: String, onResult: (Boolean, String) -> Unit) {
@@ -164,8 +241,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val resultDate = Calendar.getInstance().apply {
                 add(Calendar.DAY_OF_YEAR, daysOffset)
             }.let {
-                java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
-                    .apply { timeZone = TimeZone.getTimeZone("UTC") }
+                java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
+                    .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
                     .format(it.time)
             }
 
@@ -226,7 +303,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             val computed = computeUpcoming(updated)
             _state.update {
-                it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second)
+                it.copy(
+                    signals         = updated,
+                    upcomingSignals = computed.first,
+                    currentSignal   = computed.second
+                )
+            }
+            // Dismiss the notification for this signal immediately
+            if (notifiedSignalIds.remove(signalId)) {
+                NotificationHelper.cancelNotification(getApplication(), signalId)
             }
             driveRepo.updateSignalStatus(token, signalId, status)
         }
@@ -234,17 +319,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteSignal(signalId: String) {
         viewModelScope.launch {
-            val token   = _state.value.accessToken
-            val updated = _state.value.signals.filter { it.id != signalId }
+            val token    = _state.value.accessToken
+            val updated  = _state.value.signals.filter { it.id != signalId }
             val computed = computeUpcoming(updated)
             _state.update {
-                it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second)
+                it.copy(
+                    signals         = updated,
+                    upcomingSignals = computed.first,
+                    currentSignal   = computed.second
+                )
+            }
+            if (notifiedSignalIds.remove(signalId)) {
+                NotificationHelper.cancelNotification(getApplication(), signalId)
             }
             driveRepo.deleteSignal(token, signalId)
         }
     }
 
-    // ── Settings ──────────────────────────────────────────────────────────
+    // ── Settings / Profile ────────────────────────────────────────────────
 
     fun saveSettings(settings: AppSettings) {
         viewModelScope.launch {
@@ -253,8 +345,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (token.isNotBlank()) driveRepo.saveSettings(token, settings)
         }
     }
-
-    // ── Profile ───────────────────────────────────────────────────────────
 
     fun saveProfile(profile: UserProfile) {
         viewModelScope.launch {
@@ -274,21 +364,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val current = _state.value
                 if (!current.isSignedIn || current.accessToken.isBlank()) continue
 
+                // 1. Sync notifications for all pending signals
+                syncNotifications(current.signals)
+
+                // 2. Auto-mark missed
                 val toMark = current.signals.filter { TimeCalculations.shouldMarkAsMissed(it) }
                 if (toMark.isNotEmpty()) {
                     val updates = toMark.associate { it.id to SignalStatus.MISSED }
                     val updated = current.signals.map { sig ->
                         if (updates.containsKey(sig.id))
-                            sig.copy(status = SignalStatus.MISSED, updatedAt = System.currentTimeMillis(), autoMarked = true)
+                            sig.copy(
+                                status    = SignalStatus.MISSED,
+                                updatedAt = System.currentTimeMillis(),
+                                autoMarked = true
+                            )
                         else sig
                     }
                     val computed = computeUpcoming(updated)
                     _state.update {
-                        it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second)
+                        it.copy(
+                            signals         = updated,
+                            upcomingSignals = computed.first,
+                            currentSignal   = computed.second
+                        )
+                    }
+                    // Cancel notifications for newly-missed signals
+                    toMark.forEach { sig ->
+                        if (notifiedSignalIds.remove(sig.id)) {
+                            NotificationHelper.cancelNotification(getApplication(), sig.id)
+                        }
                     }
                     driveRepo.batchUpdateStatus(current.accessToken, updates)
                 }
 
+                // 3. Recompute upcoming
                 val recomputed = computeUpcoming(current.signals)
                 _state.update {
                     it.copy(upcomingSignals = recomputed.first, currentSignal = recomputed.second)
@@ -300,8 +409,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ── Stats ─────────────────────────────────────────────────────────────
 
     fun getStats(): Stats {
-        val signals    = _state.value.signals
-        val total      = signals.size
+        val signals   = _state.value.signals
+        val total     = signals.size
         val todayStart = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0);      set(Calendar.MILLISECOND, 0)

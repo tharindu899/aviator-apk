@@ -3,6 +3,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Required on Android 13 (API 33)+ to post notifications -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -17,12 +19,27 @@
             android:name=".MainActivity"
             android:exported="true"
             android:windowSoftInputMode="adjustResize"
-            android:screenOrientation="portrait">
+            android:screenOrientation="portrait"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+            Handles WIN / LOSS taps from the notification action buttons.
+            exported="false" — only our own app can send these intents
+            (enforced via `package = context.packageName` in PendingIntent).
+        -->
+        <receiver
+            android:name=".utils.NotificationActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.aviator.predictor.ACTION_WIN" />
+                <action android:name="com.aviator.predictor.ACTION_LOSS" />
+            </intent-filter>
+        </receiver>
 
         <!-- WorkManager initializer -->
         <provider

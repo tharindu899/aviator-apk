@@ -30,8 +30,6 @@ import com.aviator.predictor.utils.SignalWithWindow
 @Composable
 fun HomeScreen(
     state: AppUiState,
-    onMarkWin: (String) -> Unit,
-    onMarkLoss: (String) -> Unit,
     onNavigateGenerate: () -> Unit
 ) {
     LazyColumn(
@@ -39,13 +37,9 @@ fun HomeScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Current signal card
+        // Current signal card (no Win/Loss buttons — use notification or bottom bar)
         item {
-            CurrentSignalCard(
-                signal = state.currentSignal,
-                onMarkWin = onMarkWin,
-                onMarkLoss = onMarkLoss
-            )
+            CurrentSignalCard(signal = state.currentSignal)
         }
 
         // Stats grid
@@ -61,9 +55,7 @@ fun HomeScreen(
         }
 
         if (state.upcomingSignals.isEmpty()) {
-            item {
-                EmptySignalsCard(onNavigateGenerate)
-            }
+            item { EmptySignalsCard(onNavigateGenerate) }
         } else {
             items(state.upcomingSignals.take(10)) { sw ->
                 UpcomingSignalRow(sw)
@@ -74,12 +66,10 @@ fun HomeScreen(
     }
 }
 
+// ── Current signal card ───────────────────────────────────────────────────────
+
 @Composable
-private fun CurrentSignalCard(
-    signal: SignalWithWindow?,
-    onMarkWin: (String) -> Unit,
-    onMarkLoss: (String) -> Unit
-) {
+private fun CurrentSignalCard(signal: SignalWithWindow?) {
     if (signal == null) {
         GradientCard {
             Column(
@@ -88,7 +78,11 @@ private fun CurrentSignalCard(
                     .fillMaxWidth()
                     .padding(24.dp)
             ) {
-                Icon(Icons.Filled.Timer, null, tint = BrandPurple.copy(alpha = 0.5f), modifier = Modifier.size(48.dp))
+                Icon(
+                    Icons.Filled.Timer, null,
+                    tint = BrandPurple.copy(alpha = 0.5f),
+                    modifier = Modifier.size(48.dp)
+                )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("No Active Signals", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Text("Generate a signal to get started", color = Color(0xFF94A3B8), fontSize = 13.sp)
@@ -98,13 +92,14 @@ private fun CurrentSignalCard(
     }
 
     val borderColor = when (signal.betWindow.status) {
-        BetWindowStatus.ACTIVE -> GreenActive
-        BetWindowStatus.GRACE -> YellowGrace
+        BetWindowStatus.ACTIVE  -> GreenActive
+        BetWindowStatus.GRACE   -> YellowGrace
         BetWindowStatus.WAITING -> OrangeWaiting
-        BetWindowStatus.CLOSED -> RedClosed
+        BetWindowStatus.CLOSED  -> RedClosed
     }
 
     GradientCard(borderColor = borderColor) {
+        // Odd + status / result time + countdown
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -129,9 +124,9 @@ private fun CurrentSignalCard(
                 )
                 val countdownLabel = when (signal.betWindow.status) {
                     BetWindowStatus.WAITING -> "Opens in ${Formatters.formatCountdown(signal.betWindow.windowOpensIn)}"
-                    BetWindowStatus.ACTIVE -> "Result in ${Formatters.formatCountdown(signal.betWindow.timeUntilResult)}"
-                    BetWindowStatus.GRACE -> "Ends in ${Formatters.formatCountdown(signal.betWindow.windowRemainingTime)}"
-                    BetWindowStatus.CLOSED -> "Expired"
+                    BetWindowStatus.ACTIVE  -> "Result in ${Formatters.formatCountdown(signal.betWindow.timeUntilResult)}"
+                    BetWindowStatus.GRACE   -> "Ends in ${Formatters.formatCountdown(signal.betWindow.windowRemainingTime)}"
+                    BetWindowStatus.CLOSED  -> "Expired"
                 }
                 Text(countdownLabel, color = borderColor, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             }
@@ -139,15 +134,14 @@ private fun CurrentSignalCard(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Progress bar (0 = window opens, 0.5 = result time, 1.0 = window closes)
+        // Progress bar
         val progress = when {
-            signal.countdown > 45 -> 0f
-            signal.countdown > 0 -> (45f - signal.countdown) / 90f
+            signal.countdown > 45  -> 0f
+            signal.countdown > 0   -> (45f - signal.countdown) / 90f
             signal.countdown >= -45 -> 0.5f + (kotlin.math.abs(signal.countdown) / 90f)
-            else -> 1f
+            else                   -> 1f
         }.coerceIn(0f, 1f)
 
-        // Capture screen width in composable scope (not inside a modifier lambda)
         val screenWidthDp = LocalConfiguration.current.screenWidthDp
 
         Box(
@@ -157,7 +151,6 @@ private fun CurrentSignalCard(
                 .clip(RoundedCornerShape(4.dp))
                 .background(Color(0x33FFFFFF))
         ) {
-            // Fill bar
             Box(
                 modifier = Modifier
                     .fillMaxWidth(progress)
@@ -165,18 +158,18 @@ private fun CurrentSignalCard(
                     .clip(RoundedCornerShape(4.dp))
                     .background(Brush.horizontalGradient(listOf(borderColor, borderColor.copy(alpha = 0.7f))))
             )
-            // Centre marker line at the result-time midpoint
+            // Centre marker at result time
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .offset(x = (screenWidthDp * 0.5f - 32).dp) // approx midpoint, adjusted for padding
+                    .offset(x = (screenWidthDp * 0.5f - 32).dp)
                     .width(1.dp)
                     .fillMaxHeight()
                     .background(Color.White.copy(alpha = 0.5f))
             )
         }
 
-        // Window times
+        // Window times row
         Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -208,47 +201,46 @@ private fun CurrentSignalCard(
             }
         }
 
-        // Win/Loss buttons during active/grace
+        // Hint: direct user to the notification shade for Win/Loss
         if ((signal.betWindow.status == BetWindowStatus.ACTIVE ||
              signal.betWindow.status == BetWindowStatus.GRACE) &&
             signal.signal.status == SignalStatus.PENDING) {
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(borderColor.copy(alpha = 0.08f))
+                    .border(1.dp, borderColor.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(
-                    onClick = { onMarkWin(signal.signal.id) },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = GreenActive),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("WIN", fontWeight = FontWeight.Bold)
-                }
-                Button(
-                    onClick = { onMarkLoss(signal.signal.id) },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = RedClosed),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Filled.Cancel, null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("LOSS", fontWeight = FontWeight.Bold)
-                }
+                Icon(
+                    Icons.Filled.Notifications, null,
+                    tint = borderColor,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    "Tap WIN / LOSS in the notification to mark this signal",
+                    color = borderColor.copy(alpha = 0.9f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
             }
         }
     }
 }
 
+// ── Stats grid ────────────────────────────────────────────────────────────────
+
 @Composable
 private fun StatsGrid(stats: Map<String, Any>, upcomingCount: Int) {
     val items = listOf(
-        Triple("Total", stats["total"] as Int, BrandPurple),
-        Triple("Today", stats["today"] as Int, GreenActive),
-        Triple("Upcoming", upcomingCount, OrangeWaiting),
-        Triple("Win Rate", "${stats["winRate"]}%", BlueInfo)
+        Triple("Total",    stats["total"] as Int,   BrandPurple),
+        Triple("Today",    stats["today"] as Int,   GreenActive),
+        Triple("Upcoming", upcomingCount,             OrangeWaiting),
+        Triple("Win Rate", "${stats["winRate"]}%",  BlueInfo)
     )
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -272,13 +264,15 @@ private fun StatsGrid(stats: Map<String, Any>, upcomingCount: Int) {
     }
 }
 
+// ── Upcoming row ──────────────────────────────────────────────────────────────
+
 @Composable
 private fun UpcomingSignalRow(sw: SignalWithWindow) {
     val borderColor = when (sw.betWindow.status) {
-        BetWindowStatus.ACTIVE -> GreenActive
-        BetWindowStatus.GRACE -> YellowGrace
+        BetWindowStatus.ACTIVE  -> GreenActive
+        BetWindowStatus.GRACE   -> YellowGrace
         BetWindowStatus.WAITING -> OrangeWaiting
-        BetWindowStatus.CLOSED -> Color(0xFF475569)
+        BetWindowStatus.CLOSED  -> Color(0xFF475569)
     }
     Card(
         modifier = Modifier
@@ -314,6 +308,8 @@ private fun UpcomingSignalRow(sw: SignalWithWindow) {
     }
 }
 
+// ── Empty state ───────────────────────────────────────────────────────────────
+
 @Composable
 private fun EmptySignalsCard(onNavigateGenerate: () -> Unit) {
     GradientCard {
@@ -321,7 +317,11 @@ private fun EmptySignalsCard(onNavigateGenerate: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.fillMaxWidth().padding(16.dp)
         ) {
-            Icon(Icons.Filled.Timer, null, tint = BrandPurple.copy(alpha = 0.4f), modifier = Modifier.size(48.dp))
+            Icon(
+                Icons.Filled.Timer, null,
+                tint = BrandPurple.copy(alpha = 0.4f),
+                modifier = Modifier.size(48.dp)
+            )
             Spacer(modifier = Modifier.height(8.dp))
             Text("No upcoming signals", color = Color(0xFF94A3B8), fontSize = 15.sp)
             Spacer(modifier = Modifier.height(12.dp))
@@ -338,16 +338,18 @@ private fun EmptySignalsCard(onNavigateGenerate: () -> Unit) {
     }
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 private fun computeStats(signals: List<Signal>): Map<String, Any> {
-    val total = signals.size
+    val total      = signals.size
     val todayStart = java.util.Calendar.getInstance().apply {
         set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
-        set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+        set(java.util.Calendar.SECOND, 0);      set(java.util.Calendar.MILLISECOND, 0)
     }.timeInMillis
-    val today = signals.count { it.createdAt >= todayStart }
-    val wins = signals.count { it.status == SignalStatus.WIN }
-    val losses = signals.count { it.status == SignalStatus.LOSS }
-    val completed = wins + losses
-    val winRate = if (completed > 0) (wins * 100) / completed else 0
+    val today      = signals.count { it.createdAt >= todayStart }
+    val wins       = signals.count { it.status == SignalStatus.WIN }
+    val losses     = signals.count { it.status == SignalStatus.LOSS }
+    val completed  = wins + losses
+    val winRate    = if (completed > 0) (wins * 100) / completed else 0
     return mapOf("total" to total, "today" to today, "winRate" to winRate)
 }

@@ -11,6 +11,10 @@ on:
         required: false
         default: 'dev-build'
 
+# ── Explicit permissions required for gh release create ───────────────────────
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     name: Build Signed APK
@@ -97,7 +101,7 @@ jobs:
           path: ${{ steps.apk.outputs.apk_path }}
           retention-days: 30
 
-      # ── 11. Create GitHub Release via gh CLI (tag pushes only) ────────────
+      # ── 11. Create GitHub Release (tag pushes only) ───────────────────────
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -109,28 +113,31 @@ jobs:
           echo "Creating release for tag: $VERSION"
           echo "Attaching APK: $APK"
 
-          gh release create "$VERSION" "$APK" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Aviator Predictor $VERSION" \
-            --notes "## Aviator Predictor $VERSION
-
-          ### What's New
+          NOTES=$(cat <<'RELEASE_NOTES'
+          ## What's New
           - Native Android app with Jetpack Compose
           - Google Sign-In authentication
           - All data synced to Google Drive (private appDataFolder)
           - Full signal calculation matching web app algorithm
           - Live countdown timers with 90-second bet window
-          - Win/Loss quick-mark bar in bottom navigation
+          - Win/Loss quick-mark via notification action buttons
           - Auto-mark missed signals after grace period
 
-          ### Installation
-          1. Download AviatorPredictor-${VERSION}.apk
+          ## Installation
+          1. Download the APK from the assets below
           2. On your Android device: Settings > Security > Allow unknown sources
           3. Open the APK file and install
           4. Sign in with your Google account
 
-          ### Requirements
+          ## Requirements
           - Android 8.0 (API 26) or higher
-          - Google account for sign-in and Drive sync"
+          - Google account for sign-in and Drive sync
+          RELEASE_NOTES
+          )
+
+          gh release create "$VERSION" "$APK" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Aviator Predictor $VERSION" \
+            --notes "$NOTES"
 
           echo "Release created successfully"
