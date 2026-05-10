@@ -46,8 +46,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(AppUiState())
     val state: StateFlow<AppUiState> = _state.asStateFlow()
 
-    private var refreshJob: Job? = null
-    private var autoMarkJob: Job? = null
+    private var countdownJob: Job? = null   // 1 s – local countdown refresh (no Drive)
+    private var syncJob: Job? = null        // 30 s – Drive pull
+    private var autoMarkJob: Job? = null    // 3 s – missed detection + notifications
 
     /**
      * Tracks which signal IDs currently have an active notification shown,
@@ -77,7 +78,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 loadAllData(result.token)
-                startPeriodicRefresh()
+                startCountdownUpdater()
+                startPeriodicSync()
             } else {
                 _state.update { it.copy(isAuthLoading = false, error = result.error) }
             }
@@ -88,7 +90,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             authRepo.signOut()
             driveRepo.clearCache()
-            refreshJob?.cancel()
+            countdownJob?.cancel()
+            syncJob?.cancel()
             NotificationHelper.cancelAll(getApplication())
             notifiedSignalIds.clear()
             _state.value = AppUiState()
@@ -116,8 +119,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         } catch (e: Exception) {
+            // Intentionally do NOT sign out on sync failure — token may just be slow
             _state.update {
-                it.copy(isLoading = false, syncStatus = SyncStatus.ERROR, error = e.message)
+                it.copy(
+                    isLoading  = false,
+                    syncStatus = SyncStatus.ERROR,
+                    error      = "Sync failed: ${e.message}"
+                )
             }
         }
     }
@@ -128,24 +136,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { loadAllData(token) }
     }
 
-    private fun startPeriodicRefresh() {
-        refreshJob?.cancel()
-        refreshJob = viewModelScope.launch {
+    // ── 1-second countdown updater (pure local, no Drive calls) ──────────
+
+    private fun startCountdownUpdater() {
+        countdownJob?.cancel()
+        countdownJob = viewModelScope.launch {
             while (isActive) {
-                delay(5_000)
+                delay(1_000)
+                val current = _state.value
+                if (!current.isSignedIn || current.signals.isEmpty()) continue
+                val computed = computeUpcoming(current.signals)
+                _state.update {
+                    it.copy(
+                        upcomingSignals = computed.first,
+                        currentSignal   = computed.second
+                    )
+                }
+            }
+        }
+    }
+
+    // ── 30-second Drive sync (pull fresh data from cloud) ────────────────
+
+    private fun startPeriodicSync() {
+        syncJob?.cancel()
+        syncJob = viewModelScope.launch {
+            while (isActive) {
+                delay(30_000)
                 val token = _state.value.accessToken
-                if (token.isNotBlank() && _state.value.syncStatus == SyncStatus.SYNCED) {
-                    try {
-                        val signals  = driveRepo.loadSignals(token)
-                        val computed = computeUpcoming(signals)
-                        _state.update {
-                            it.copy(
-                                signals         = signals,
-                                upcomingSignals = computed.first,
-                                currentSignal   = computed.second
-                            )
-                        }
-                    } catch (_: Exception) {}
+                if (token.isBlank() || !_state.value.isSignedIn) continue
+                try {
+                    val signals  = driveRepo.loadSignals(token)
+                    val computed = computeUpcoming(signals)
+                    _state.update {
+                        it.copy(
+                            signals         = signals,
+                            syncStatus      = SyncStatus.SYNCED,
+                            upcomingSignals = computed.first,
+                            currentSignal   = computed.second
+                        )
+                    }
+                } catch (_: Exception) {
+                    // Silent — don't disrupt UI, just mark offline
+                    _state.update { it.copy(syncStatus = SyncStatus.OFFLINE) }
                 }
             }
         }
@@ -177,8 +210,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Shows a persistent notification with WIN / LOSS action buttons when a
-     * signal enters its active bet window (countdown ≤ 45s).
-     * Cancels the notification once the signal is marked or the window closes.
+     * signal enters its active bet window (countdown ≤ 45 s).
+     * Only plays sound on the FIRST notification for each signal;
+     * subsequent refreshes are silent so there's no noise every second.
      */
     private fun syncNotifications(signals: List<Signal>) {
         if (!hasNotificationPermission()) return
@@ -186,23 +220,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         signals.forEach { signal ->
             if (signal.status != SignalStatus.PENDING) {
-                // Resolved — dismiss any lingering notification
                 if (notifiedSignalIds.remove(signal.id)) {
                     NotificationHelper.cancelNotification(context, signal.id)
                 }
                 return@forEach
             }
 
-            val countdown   = TimeCalculations.getCountdown(signal)
-            val inWindow    = countdown <= 45 && countdown >= -45
+            val countdown    = TimeCalculations.getCountdown(signal)
+            val inWindow     = countdown <= 45 && countdown >= -45
             val windowClosed = countdown < -45
 
             when {
                 inWindow -> {
-                    // Show / refresh notification (refresh updates countdown text)
-                    val betWindow = TimeCalculations.getBetWindowStatus(countdown)
+                    val isFirstShow = !notifiedSignalIds.contains(signal.id)
+                    val betWindow   = TimeCalculations.getBetWindowStatus(countdown)
                     NotificationHelper.showActiveNotification(
-                        context, signal, betWindow.status, countdown
+                        context    = context,
+                        signal     = signal,
+                        windowStatus = betWindow.status,
+                        countdown  = countdown,
+                        playSound  = isFirstShow      // ← sound only on entry
                     )
                     notifiedSignalIds.add(signal.id)
                 }
@@ -313,7 +350,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (notifiedSignalIds.remove(signalId)) {
                 NotificationHelper.cancelNotification(getApplication(), signalId)
             }
-            driveRepo.updateSignalStatus(token, signalId, status)
+            // Fire-and-forget Drive save — don't block UI, don't sign out on failure
+            if (token.isNotBlank()) {
+                launch {
+                    runCatching { driveRepo.updateSignalStatus(token, signalId, status) }
+                }
+            }
         }
     }
 
@@ -332,7 +374,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (notifiedSignalIds.remove(signalId)) {
                 NotificationHelper.cancelNotification(getApplication(), signalId)
             }
-            driveRepo.deleteSignal(token, signalId)
+            if (token.isNotBlank()) {
+                launch { runCatching { driveRepo.deleteSignal(token, signalId) } }
+            }
         }
     }
 
@@ -342,7 +386,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _state.update { it.copy(settings = settings) }
             val token = _state.value.accessToken
-            if (token.isNotBlank()) driveRepo.saveSettings(token, settings)
+            if (token.isNotBlank()) {
+                launch { runCatching { driveRepo.saveSettings(token, settings) } }
+            }
         }
     }
 
@@ -350,11 +396,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _state.update { it.copy(user = profile) }
             val token = _state.value.accessToken
-            if (token.isNotBlank()) driveRepo.saveProfile(token, profile)
+            if (token.isNotBlank()) {
+                launch { runCatching { driveRepo.saveProfile(token, profile) } }
+            }
         }
     }
 
-    // ── Auto-mark missed ──────────────────────────────────────────────────
+    // ── Auto-mark missed + notification sync (runs every 3 s) ────────────
 
     private fun startAutoMarkMissed() {
         autoMarkJob?.cancel()
@@ -364,43 +412,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val current = _state.value
                 if (!current.isSignedIn || current.accessToken.isBlank()) continue
 
-                // 1. Sync notifications for all pending signals
+                // 1. Sync notifications for pending signals
                 syncNotifications(current.signals)
 
                 // 2. Auto-mark missed
                 val toMark = current.signals.filter { TimeCalculations.shouldMarkAsMissed(it) }
-                if (toMark.isNotEmpty()) {
-                    val updates = toMark.associate { it.id to SignalStatus.MISSED }
-                    val updated = current.signals.map { sig ->
-                        if (updates.containsKey(sig.id))
-                            sig.copy(
-                                status    = SignalStatus.MISSED,
-                                updatedAt = System.currentTimeMillis(),
-                                autoMarked = true
-                            )
-                        else sig
-                    }
-                    val computed = computeUpcoming(updated)
-                    _state.update {
-                        it.copy(
-                            signals         = updated,
-                            upcomingSignals = computed.first,
-                            currentSignal   = computed.second
-                        )
-                    }
-                    // Cancel notifications for newly-missed signals
-                    toMark.forEach { sig ->
-                        if (notifiedSignalIds.remove(sig.id)) {
-                            NotificationHelper.cancelNotification(getApplication(), sig.id)
-                        }
-                    }
-                    driveRepo.batchUpdateStatus(current.accessToken, updates)
-                }
+                if (toMark.isEmpty()) continue
 
-                // 3. Recompute upcoming
-                val recomputed = computeUpcoming(current.signals)
+                val updates = toMark.associate { it.id to SignalStatus.MISSED }
+                val updated = current.signals.map { sig ->
+                    if (updates.containsKey(sig.id))
+                        sig.copy(
+                            status     = SignalStatus.MISSED,
+                            updatedAt  = System.currentTimeMillis(),
+                            autoMarked = true
+                        )
+                    else sig
+                }
+                val computed = computeUpcoming(updated)
                 _state.update {
-                    it.copy(upcomingSignals = recomputed.first, currentSignal = recomputed.second)
+                    it.copy(
+                        signals         = updated,
+                        upcomingSignals = computed.first,
+                        currentSignal   = computed.second
+                    )
+                }
+                toMark.forEach { sig ->
+                    if (notifiedSignalIds.remove(sig.id)) {
+                        NotificationHelper.cancelNotification(getApplication(), sig.id)
+                    }
+                }
+                // Persist without blocking UI; ignore errors
+                launch {
+                    runCatching {
+                        driveRepo.batchUpdateStatus(current.accessToken, updates)
+                    }
                 }
             }
         }

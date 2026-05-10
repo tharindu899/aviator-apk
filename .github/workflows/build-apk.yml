@@ -73,7 +73,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
-      # ── 9. Rename APK ─────────────────────────────────────────────────────
+      # ── 9. Rename APK & resolve version ───────────────────────────────────
       - name: Rename APK
         id: apk
         run: |
@@ -82,16 +82,18 @@ jobs:
 
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF_NAME}"
-          else
+          elif [[ -n "${{ github.event.inputs.version_name }}" ]]; then
             VERSION="${{ github.event.inputs.version_name }}"
+          else
+            VERSION="dev-build"
           fi
 
           DEST="AviatorPredictor-${VERSION}.apk"
           cp "$SRC" "$DEST"
           echo "Renamed to: $DEST"
 
-          echo "apk_path=$DEST" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "apk_path=$DEST"    >> $GITHUB_OUTPUT
+          echo "version=$VERSION"  >> $GITHUB_OUTPUT
 
       # ── 10. Upload APK as workflow artifact ───────────────────────────────
       - name: Upload APK artifact
@@ -101,16 +103,27 @@ jobs:
           path: ${{ steps.apk.outputs.apk_path }}
           retention-days: 30
 
-      # ── 11. Create GitHub Release (tag pushes only) ───────────────────────
+      # ── 11. Delete existing release/tag with same name (manual runs) ──────
+      #        Prevents "release already exists" errors when re-running
+      - name: Delete existing release if present
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.apk.outputs.version }}"
+          # Delete release (ignore error if not found)
+          gh release delete "$VERSION" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
+          # Delete the tag too so gh release create can recreate it
+          git push origin ":refs/tags/$VERSION" 2>/dev/null || true
+
+      # ── 12. Create GitHub Release (tag pushes AND manual dispatch) ────────
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.apk.outputs.version }}"
           APK="${{ steps.apk.outputs.apk_path }}"
 
-          echo "Creating release for tag: $VERSION"
+          echo "Creating release for: $VERSION"
           echo "Attaching APK: $APK"
 
           NOTES=$(cat <<'RELEASE_NOTES'
@@ -135,9 +148,11 @@ jobs:
           RELEASE_NOTES
           )
 
+          # --create-tag lets gh create a lightweight tag even without a push event
           gh release create "$VERSION" "$APK" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Aviator Predictor $VERSION" \
-            --notes "$NOTES"
+            --notes "$NOTES" \
+            --create-tag
 
           echo "Release created successfully"

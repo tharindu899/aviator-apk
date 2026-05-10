@@ -5,6 +5,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.aviator.predictor.MainActivity
@@ -14,49 +16,65 @@ import com.aviator.predictor.data.models.Signal
 
 object NotificationHelper {
 
-    const val CHANNEL_ID    = "aviator_signal_alerts"
-    const val ACTION_WIN    = "com.aviator.predictor.ACTION_WIN"
-    const val ACTION_LOSS   = "com.aviator.predictor.ACTION_LOSS"
+    const val CHANNEL_ID      = "aviator_signal_alerts"
+    const val ACTION_WIN      = "com.aviator.predictor.ACTION_WIN"
+    const val ACTION_LOSS     = "com.aviator.predictor.ACTION_LOSS"
     const val EXTRA_SIGNAL_ID = "extra_signal_id"
 
     // ── Channel (call once, idempotent) ───────────────────────────────────
 
     fun createChannel(context: Context) {
+        val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+
+        val audioAttributes = AudioAttributes.Builder()
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+            .build()
+
         val channel = NotificationChannel(
             CHANNEL_ID,
             "Signal Alerts",
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "Bet-window alerts with quick Win / Loss actions"
+            description        = "Bet-window alerts with quick Win / Loss actions"
             enableVibration(true)
+            vibrationPattern   = longArrayOf(0, 250, 100, 250)   // buzz-buzz pattern
+            setSound(soundUri, audioAttributes)                   // default notification sound
         }
+
         (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
             .createNotificationChannel(channel)
     }
 
     // ── Show / update the active-signal notification ──────────────────────
+    //
+    // playSound = true  → first entry into window  → plays channel sound + vibration
+    // playSound = false → countdown refresh        → silent update, no sound/vibration
 
     fun showActiveNotification(
         context: Context,
         signal: Signal,
         windowStatus: BetWindowStatus,
-        countdown: Int
+        countdown: Int,
+        playSound: Boolean = true
     ) {
-        val notifId   = signal.id.hashCode()
-        val oddStr    = String.format("%.2f", signal.odd)
-        val timeStr   = Formatters.formatTime(signal.resultTime)
+        val notifId  = signal.id.hashCode()
+        val oddStr   = String.format("%.2f", signal.odd)
+        val timeStr  = Formatters.formatTime(signal.resultTime)
 
         val title = when (windowStatus) {
             BetWindowStatus.ACTIVE -> "🟢 BET WINDOW OPEN — ${oddStr}x"
             BetWindowStatus.GRACE  -> "🟡 GRACE PERIOD — ${oddStr}x"
-            else                   -> return          // shouldn't happen
+            else                   -> return          // WAITING / CLOSED: nothing to show
         }
 
         val body = buildString {
             append("Signal: $timeStr")
-            if (countdown > 0) append(" · ${countdown}s to result")
-            else if (countdown < 0) append(" · ${-countdown}s past result")
-            else append(" · Result NOW")
+            when {
+                countdown > 0  -> append(" · ${countdown}s to result")
+                countdown < 0  -> append(" · ${-countdown}s past result")
+                else           -> append(" · Result NOW")
+            }
         }
 
         // Tap → bring app to front
@@ -95,7 +113,7 @@ object NotificationHelper {
             .setContentIntent(tapPending)
             .setAutoCancel(false)
             .setOngoing(true)           // stays visible until marked or expired
-            .setSilent(countdown < 0)   // no sound during grace period
+            .setSilent(!playSound)      // sound + vibrate only on first entry
             .addAction(
                 android.R.drawable.checkbox_on_background,
                 "✓  WIN",
