@@ -81,6 +81,7 @@ dependencies {
     implementation(libs.gson)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     // Coil for async image loading (user avatars)
     implementation(libs.coil.compose)
     debugImplementation(libs.androidx.ui.tooling)
