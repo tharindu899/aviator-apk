@@ -103,19 +103,27 @@ jobs:
           path: ${{ steps.apk.outputs.apk_path }}
           retention-days: 30
 
-      # ── 11. Delete existing release/tag with same name (manual runs) ──────
-      #        Prevents "release already exists" errors when re-running
+      # ── 11. Ensure git tag exists (required by gh release create) ───────────
+      - name: Create or update git tag
+        run: |
+          VERSION="${{ steps.apk.outputs.version }}"
+          git config user.email "actions@github.com"
+          git config user.name  "GitHub Actions"
+          # Delete remote tag if it already exists (re-run safety)
+          git push origin ":refs/tags/$VERSION" 2>/dev/null || true
+          # Create and push a fresh lightweight tag
+          git tag -f "$VERSION"
+          git push origin "$VERSION"
+
+      # ── 12. Delete any existing GitHub release with this name ─────────────
       - name: Delete existing release if present
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.apk.outputs.version }}"
-          # Delete release (ignore error if not found)
           gh release delete "$VERSION" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
-          # Delete the tag too so gh release create can recreate it
-          git push origin ":refs/tags/$VERSION" 2>/dev/null || true
 
-      # ── 12. Create GitHub Release (tag pushes AND manual dispatch) ────────
+      # ── 13. Create GitHub Release (tag pushes AND manual dispatch) ────────
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -148,11 +156,9 @@ jobs:
           RELEASE_NOTES
           )
 
-          # --create-tag lets gh create a lightweight tag even without a push event
           gh release create "$VERSION" "$APK" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Aviator Predictor $VERSION" \
-            --notes "$NOTES" \
-            --create-tag
+            --notes "$NOTES"
 
           echo "Release created successfully"
