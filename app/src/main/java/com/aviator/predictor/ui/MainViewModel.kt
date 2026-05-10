@@ -24,7 +24,7 @@ import java.util.*
 enum class SyncStatus { PENDING, SYNCING, SYNCED, OFFLINE, ERROR }
 
 data class AppUiState(
-    val isAuthLoading: Boolean = true,    // true on launch while session restores
+    val isAuthLoading: Boolean = true,
     val isSignedIn: Boolean = false,
     val user: UserProfile? = null,
     val accessToken: String = "",
@@ -46,9 +46,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(AppUiState())
     val state: StateFlow<AppUiState> = _state.asStateFlow()
 
-    private var countdownJob: Job? = null   // 1 s – local countdown refresh (no Drive)
-    private var syncJob: Job? = null        // 30 s – Drive pull
-    private var autoMarkJob: Job? = null    // 3 s – missed detection + notifications
+    private var countdownJob: Job? = null
+    private var syncJob: Job? = null
+    private var autoMarkJob: Job? = null
 
     private val notifiedSignalIds = mutableSetOf<String>()
 
@@ -56,12 +56,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         NotificationHelper.createChannel(application)
         startAutoMarkMissed()
         collectPendingActions()
-        // Try to restore the previous session silently.
-        // isAuthLoading = true keeps the splash screen on until we know the answer.
         tryRestoreSession()
     }
 
-    // ── Silent session restore (runs every cold start) ────────────────────
+    // ── Silent session restore ────────────────────────────────────────────
 
     private fun tryRestoreSession() {
         viewModelScope.launch {
@@ -79,7 +77,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 startCountdownUpdater()
                 startPeriodicSync()
             } else {
-                // No saved session — show sign-in screen
                 _state.update { it.copy(isAuthLoading = false) }
             }
         }
@@ -111,13 +108,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun signOut() {
         viewModelScope.launch {
-            authRepo.signOut()          // clears DataStore + credential state
+            authRepo.signOut()
             driveRepo.clearCache()
             countdownJob?.cancel()
             syncJob?.cancel()
             NotificationHelper.cancelAll(getApplication())
             notifiedSignalIds.clear()
-            _state.value = AppUiState(isAuthLoading = false)   // show sign-in immediately
+            _state.value = AppUiState(isAuthLoading = false)
         }
     }
 
@@ -158,7 +155,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { loadAllData(token) }
     }
 
-    // ── 1-second countdown updater (pure local, no Drive calls) ──────────
+    // ── 1-second countdown updater ────────────────────────────────────────
 
     private fun startCountdownUpdater() {
         countdownJob?.cancel()
@@ -225,7 +222,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun syncNotifications(signals: List<Signal>) {
+    /**
+     * Syncs notification state with current signals.
+     * Respects [settings.notifications] — if disabled, cancels all active
+     * notifications and skips posting new ones.
+     */
+    private fun syncNotifications(signals: List<Signal>, settings: AppSettings) {
+        // If notifications are disabled, cancel anything still showing and bail
+        if (!settings.notifications) {
+            if (notifiedSignalIds.isNotEmpty()) {
+                val context = getApplication<Application>()
+                notifiedSignalIds.forEach { NotificationHelper.cancelNotification(context, it) }
+                notifiedSignalIds.clear()
+            }
+            return
+        }
+
         if (!hasNotificationPermission()) return
         val context = getApplication<Application>()
 
@@ -244,13 +256,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             when {
                 inWindow -> {
                     val isFirstShow = !notifiedSignalIds.contains(signal.id)
+                    // Respect the sound setting: only play sound if both "first show"
+                    // AND the sound setting is enabled
+                    val playSound   = isFirstShow && settings.sound
                     val betWindow   = TimeCalculations.getBetWindowStatus(countdown)
                     NotificationHelper.showActiveNotification(
                         context      = context,
                         signal       = signal,
                         windowStatus = betWindow.status,
                         countdown    = countdown,
-                        playSound    = isFirstShow
+                        playSound    = playSound
                     )
                     notifiedSignalIds.add(signal.id)
                 }
@@ -402,7 +417,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun saveProfile(profile: UserProfile) {
         viewModelScope.launch {
             _state.update { it.copy(user = profile) }
-            // Keep DataStore name/photo in sync so restore shows correct info
             launch { runCatching { authRepo.saveSession(profile) } }
             val token = _state.value.accessToken
             if (token.isNotBlank()) {
@@ -421,7 +435,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val current = _state.value
                 if (!current.isSignedIn || current.accessToken.isBlank()) continue
 
-                syncNotifications(current.signals)
+                // Always sync notifications (syncNotifications checks the setting internally)
+                syncNotifications(current.signals, current.settings)
+
+                // Respect the autoMarkMissed setting before doing any DB writes
+                if (!current.settings.autoMarkMissed) continue
 
                 val toMark = current.signals.filter { TimeCalculations.shouldMarkAsMissed(it) }
                 if (toMark.isEmpty()) continue

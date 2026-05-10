@@ -35,6 +35,14 @@ fun ProfileScreen(
     var settings by remember(state.settings) { mutableStateOf(state.settings) }
     var showSignOutDialog by remember { mutableStateOf(false) }
 
+    // Compute live stats from actual signal list — never trust stale profile fields
+    val totalSignals = state.signals.size
+    val totalWins    = state.signals.count { it.status == SignalStatus.WIN }
+    val totalLosses  = state.signals.count { it.status == SignalStatus.LOSS }
+    val totalMissed  = state.signals.count { it.status == SignalStatus.MISSED }
+    val completed    = totalWins + totalLosses
+    val winRate      = if (completed > 0) (totalWins * 100) / completed else 0
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -49,24 +57,24 @@ fun ProfileScreen(
                 modifier = Modifier.fillMaxWidth().padding(8.dp)
             ) {
                 UserAvatar(
-                    photoUrl = state.user?.photoUrl,
+                    photoUrl    = state.user?.photoUrl,
                     displayName = state.user?.displayName ?: "",
-                    size = 80.dp
+                    size        = 80.dp
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
                 if (editingName) {
                     OutlinedTextField(
-                        value = displayName,
+                        value         = displayName,
                         onValueChange = { displayName = it },
-                        label = { Text("Display Name") },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = BrandPurple,
+                        label         = { Text("Display Name") },
+                        singleLine    = true,
+                        colors        = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor   = BrandPurple,
                             unfocusedBorderColor = Color(0xFF475569),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedLabelColor = BrandPurple
+                            focusedTextColor     = Color.White,
+                            unfocusedTextColor   = Color.White,
+                            focusedLabelColor    = BrandPurple
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -86,33 +94,53 @@ fun ProfileScreen(
                                 }
                                 editingName = false
                             },
-                            shape = RoundedCornerShape(10.dp),
+                            shape  = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = BrandPurple)
                         ) { Text("Save") }
                     }
                 } else {
                     Text(
                         state.user?.displayName ?: "User",
-                        color = Color.White,
+                        color      = Color.White,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 22.sp
+                        fontSize   = 22.sp
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        state.user?.email ?: "",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 14.sp
-                    )
+                    Text(state.user?.email ?: "", color = Color(0xFF94A3B8), fontSize = 14.sp)
                     Spacer(modifier = Modifier.height(10.dp))
                     OutlinedButton(
                         onClick = { editingName = true },
-                        shape = RoundedCornerShape(10.dp),
-                        border = ButtonDefaults.outlinedButtonBorder,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandPurple)
+                        shape   = RoundedCornerShape(10.dp),
+                        border  = ButtonDefaults.outlinedButtonBorder,
+                        colors  = ButtonDefaults.outlinedButtonColors(contentColor = BrandPurple)
                     ) {
                         Icon(Icons.Filled.Edit, null, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Edit Name", fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+
+        // ── Live stats grid ────────────────────────────────────────────────
+        Row(
+            modifier              = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(
+                Triple("Signals", totalSignals.toString(), BrandPurple),
+                Triple("Wins",    totalWins.toString(),    GreenActive),
+                Triple("Losses",  totalLosses.toString(),  RedClosed),
+                Triple("Win %",   "$winRate%",             BlueInfo)
+            ).forEach { (label, value, color) ->
+                Card(
+                    modifier = Modifier.weight(1f),
+                    shape    = RoundedCornerShape(14.dp),
+                    colors   = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f))
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(label, color = color.copy(alpha = 0.8f), fontSize = 10.sp)
+                        Text(value, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
                     }
                 }
             }
@@ -123,32 +151,28 @@ fun ProfileScreen(
             Text("Account Information", color = BrandPurple, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             Spacer(modifier = Modifier.height(12.dp))
             listOf(
-                Triple(Icons.Filled.CalendarToday, "Member Since",
-                    Formatters.formatDate(state.user?.createdAt ?: System.currentTimeMillis())),
-                Triple(Icons.Filled.Login, "Last Login",
-                    Formatters.formatDate(state.user?.lastLoginAt ?: System.currentTimeMillis())),
-                Triple(Icons.Filled.SignalCellularAlt, "Total Signals",
-                    state.user?.signalCount?.toString() ?: "0"),
-                Triple(Icons.Filled.EmojiEvents, "Total Wins",
-                    state.user?.totalWins?.toString() ?: "0")
-            ).forEach { (icon, label, value) ->
+                Triple(Icons.Filled.CalendarToday,    "Member Since",   Formatters.formatDate(state.user?.createdAt  ?: System.currentTimeMillis())),
+                Triple(Icons.Filled.Login,            "Last Login",     Formatters.formatDate(state.user?.lastLoginAt ?: System.currentTimeMillis())),
+                Triple(Icons.Filled.SignalCellularAlt,"Total Signals",  totalSignals.toString()),
+                Triple(Icons.Filled.EmojiEvents,      "Total Wins",     totalWins.toString()),
+                Triple(Icons.Filled.Cancel,           "Total Losses",   totalLosses.toString()),
+                Triple(Icons.Filled.NotInterested,    "Missed",         totalMissed.toString())
+            ).forEachIndexed { index, (icon, label, value) ->
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 6.dp),
+                    modifier              = Modifier.fillMaxWidth().padding(vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment     = Alignment.CenterVertically
                 ) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment     = Alignment.CenterVertically
                     ) {
                         Icon(icon, null, tint = BrandPurple.copy(0.7f), modifier = Modifier.size(18.dp))
                         Text(label, color = Color(0xFF94A3B8), fontSize = 14.sp)
                     }
                     Text(value, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                 }
-                HorizontalDivider(color = Color(0x22FFFFFF), thickness = 0.5.dp)
+                if (index < 5) HorizontalDivider(color = Color(0x22FFFFFF), thickness = 0.5.dp)
             }
         }
 
@@ -158,37 +182,37 @@ fun ProfileScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             SettingToggle(
-                icon = Icons.Filled.Notifications,
-                label = "Notifications",
-                description = "Signal alerts",
-                checked = settings.notifications
+                icon        = Icons.Filled.Notifications,
+                label       = "Notifications",
+                description = "Signal alerts in notification shade",
+                checked     = settings.notifications
             ) {
                 settings = settings.copy(notifications = !settings.notifications)
                 onSaveSettings(settings)
             }
             SettingToggle(
-                icon = Icons.Filled.VolumeUp,
-                label = "Sound Effects",
-                description = "Play sounds for alerts",
-                checked = settings.sound
+                icon        = Icons.Filled.VolumeUp,
+                label       = "Sound Effects",
+                description = "Play sound when bet window opens",
+                checked     = settings.sound
             ) {
                 settings = settings.copy(sound = !settings.sound)
                 onSaveSettings(settings)
             }
             SettingToggle(
-                icon = Icons.Filled.AlarmOff,
-                label = "Auto-mark Missed",
+                icon        = Icons.Filled.AlarmOff,
+                label       = "Auto-mark Missed",
                 description = "Mark expired signals automatically",
-                checked = settings.autoMarkMissed
+                checked     = settings.autoMarkMissed
             ) {
                 settings = settings.copy(autoMarkMissed = !settings.autoMarkMissed)
                 onSaveSettings(settings)
             }
             SettingToggle(
-                icon = Icons.Filled.Timer,
-                label = "Show Countdown",
-                description = "Live countdown timers",
-                checked = settings.showCountdown
+                icon        = Icons.Filled.Timer,
+                label       = "Show Countdown",
+                description = "Live countdown timers on signals",
+                checked     = settings.showCountdown
             ) {
                 settings = settings.copy(showCountdown = !settings.showCountdown)
                 onSaveSettings(settings)
@@ -200,18 +224,18 @@ fun ProfileScreen(
             Text("Data & Sync", color = BrandPurple, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             Spacer(modifier = Modifier.height(10.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier              = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment     = Alignment.CenterVertically
             ) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment     = Alignment.CenterVertically
                 ) {
                     Icon(Icons.Filled.CloudSync, null, tint = BrandPurple, modifier = Modifier.size(20.dp))
                     Column {
                         Text("Google Drive", color = Color.White, fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                        Text("All data saved privately", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                        Text("All data saved privately to your account", color = Color(0xFF94A3B8), fontSize = 12.sp)
                     }
                 }
                 SyncStatusPill(state.syncStatus)
@@ -220,10 +244,10 @@ fun ProfileScreen(
 
         // ── Sign out ───────────────────────────────────────────────────────
         Button(
-            onClick = { showSignOutDialog = true },
+            onClick  = { showSignOutDialog = true },
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = RedClosed.copy(alpha = 0.15f)),
+            shape    = RoundedCornerShape(14.dp),
+            colors   = ButtonDefaults.buttonColors(containerColor = RedClosed.copy(alpha = 0.15f))
         ) {
             Icon(Icons.Filled.Logout, null, tint = RedClosed, modifier = Modifier.size(20.dp))
             Spacer(modifier = Modifier.width(8.dp))
@@ -236,10 +260,10 @@ fun ProfileScreen(
     if (showSignOutDialog) {
         AlertDialog(
             onDismissRequest = { showSignOutDialog = false },
-            containerColor = SlateSurface,
-            title = { Text("Sign Out?", color = Color.White) },
-            text = { Text("Your data stays saved in Google Drive.", color = Color(0xFF94A3B8)) },
-            confirmButton = {
+            containerColor   = SlateSurface,
+            title            = { Text("Sign Out?", color = Color.White) },
+            text             = { Text("Your data stays saved in Google Drive.", color = Color(0xFF94A3B8)) },
+            confirmButton    = {
                 TextButton(onClick = { showSignOutDialog = false; onSignOut() }) {
                     Text("Sign Out", color = RedClosed, fontWeight = FontWeight.Bold)
                 }
@@ -262,21 +286,17 @@ private fun SettingToggle(
     onToggle: () -> Unit
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
+        modifier              = Modifier.fillMaxWidth().padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment     = Alignment.CenterVertically
     ) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
+            verticalAlignment     = Alignment.CenterVertically,
+            modifier              = Modifier.weight(1f)
         ) {
             Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
+                modifier        = Modifier.size(36.dp).clip(RoundedCornerShape(10.dp))
                     .background(BrandPurple.copy(0.15f)),
                 contentAlignment = Alignment.Center
             ) {
@@ -288,11 +308,11 @@ private fun SettingToggle(
             }
         }
         Switch(
-            checked = checked,
+            checked        = checked,
             onCheckedChange = { onToggle() },
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = GreenActive,
+            colors         = SwitchDefaults.colors(
+                checkedThumbColor   = Color.White,
+                checkedTrackColor   = GreenActive,
                 uncheckedThumbColor = Color.White,
                 uncheckedTrackColor = Color(0xFF475569)
             )
