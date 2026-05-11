@@ -28,16 +28,29 @@ object TimeCalculations {
         return TimeObj(hours, minutes, seconds)
     }
 
-    // Parse input like "2.02x 21:31:22" or "150x 23:34:00"
+    // Parse input — accepts ALL of these formats:
+    //   2.02x 21:31:22      (standard)
+    //   2.02x21:31:22       (no space, colons)
+    //   2.02x 21.31.22      (space, dots)
+    //   2.02x21.31.22       (no space, dots)
+    //   150x 23:34:00
+    //   1437.20x 06:31:56
     fun parseInput(input: String): ParsedInput? {
-        val cleaned = input.trim().replace("\\s+".toRegex(), " ").replace(",", "")
-        val pattern = Regex("""([0-9.]+)x?\s*(\d{1,2}):(\d{1,2}):(\d{1,2})""", RegexOption.IGNORE_CASE)
+        val cleaned = input.trim()
+            .replace("\\s+".toRegex(), " ")
+            .replace(",", "")
+
+        // Accept colon OR dot as the time-component separator
+        val pattern = Regex(
+            """([0-9.]+)[xX]?\s*(\d{1,2})[:.。](\d{1,2})[:.。](\d{1,2})""",
+            RegexOption.IGNORE_CASE
+        )
         val match = pattern.find(cleaned) ?: return null
 
-        val odd = match.groupValues[1].toDoubleOrNull() ?: return null
-        val hour = match.groupValues[2].toIntOrNull() ?: return null
-        val minute = match.groupValues[3].toIntOrNull() ?: return null
-        val second = match.groupValues[4].toIntOrNull() ?: return null
+        val odd    = match.groupValues[1].toDoubleOrNull() ?: return null
+        val hour   = match.groupValues[2].toIntOrNull()    ?: return null
+        val minute = match.groupValues[3].toIntOrNull()    ?: return null
+        val second = match.groupValues[4].toIntOrNull()    ?: return null
 
         if (odd <= 0 || hour !in 0..23 || minute !in 0..59 || second !in 0..59) return null
         return ParsedInput(odd, hour, minute, second)
@@ -45,11 +58,10 @@ object TimeCalculations {
 
     // Calculate countdown in seconds to the result time
     fun getCountdown(signal: Signal): Int {
-        val now = Calendar.getInstance()
+        val now    = Calendar.getInstance()
         val target = Calendar.getInstance()
 
         if (signal.resultDate.isNotEmpty()) {
-            // Parse ISO date string
             try {
                 val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
                 sdf.timeZone = TimeZone.getTimeZone("UTC")
@@ -115,14 +127,14 @@ object TimeCalculations {
         var openSecs = resultSecs - 45
         if (openSecs < 0) openSecs += 86400
         val openTime = TimeObj(
-            hours = (openSecs / 3600) % 24,
+            hours   = (openSecs / 3600) % 24,
             minutes = (openSecs % 3600) / 60,
             seconds = openSecs % 60
         )
 
         val closeSecs = resultSecs + 45
         val closeTime = TimeObj(
-            hours = (closeSecs / 3600) % 24,
+            hours   = (closeSecs / 3600) % 24,
             minutes = (closeSecs % 3600) / 60,
             seconds = closeSecs % 60
         )
@@ -143,8 +155,8 @@ object TimeCalculations {
         signals
             .filter { it.status == SignalStatus.PENDING && it.resultTime != TimeObj() }
             .map { signal ->
-                val countdown = getCountdown(signal)
-                val betWindow = getBetWindowStatus(countdown)
+                val countdown   = getCountdown(signal)
+                val betWindow   = getBetWindowStatus(countdown)
                 val windowTimes = signal.windowTimes ?: getBetWindowTimes(signal.resultTime)
                 SignalWithWindow(signal, countdown, betWindow, windowTimes)
             }
@@ -154,7 +166,10 @@ object TimeCalculations {
                 val datePrefix = sw.signal.resultDate.take(10).ifEmpty {
                     java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
                 }
-                val timeKey = "$datePrefix-${sw.signal.resultTime.hours.toString().padStart(2,'0')}:${sw.signal.resultTime.minutes.toString().padStart(2,'0')}:${sw.signal.resultTime.seconds.toString().padStart(2,'0')}"
+                val timeKey = "$datePrefix-" +
+                    "${sw.signal.resultTime.hours.toString().padStart(2, '0')}:" +
+                    "${sw.signal.resultTime.minutes.toString().padStart(2, '0')}:" +
+                    "${sw.signal.resultTime.seconds.toString().padStart(2, '0')}"
 
                 if (!seenTimes.containsKey(timeKey)) {
                     seenTimes[timeKey] = sw
@@ -172,7 +187,8 @@ object TimeCalculations {
     fun getCurrentSignal(signals: List<SignalWithWindow>): SignalWithWindow? {
         if (signals.isEmpty()) return null
         return signals.firstOrNull {
-            it.betWindow.status == BetWindowStatus.ACTIVE || it.betWindow.status == BetWindowStatus.GRACE
+            it.betWindow.status == BetWindowStatus.ACTIVE ||
+            it.betWindow.status == BetWindowStatus.GRACE
         } ?: signals.firstOrNull()
     }
 }

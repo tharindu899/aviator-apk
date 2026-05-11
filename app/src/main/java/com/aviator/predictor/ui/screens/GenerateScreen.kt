@@ -101,7 +101,8 @@ fun GenerateScreen(
                     onClick = {
                         val pasted = clipboard.getText()?.text ?: ""
                         if (pasted.isNotBlank()) {
-                            input = pasted.trim().replace(Regex("([0-9.]+)x(\\d)"), "$1x $2")
+                            input = normalizeSignalInput(pasted)
+                            statusMessage = null
                         }
                     },
                     modifier = Modifier
@@ -239,6 +240,67 @@ fun GenerateScreen(
             }
         }
 
+        // Supported formats card
+        GradientCard {
+            Text(
+                "Supported Paste Formats",
+                color = Color(0xFFC084FC),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            listOf(
+                "12.32x 09:18:18" to "space + colons",
+                "12.32x09:18:18"  to "no space + colons",
+                "12.32x 09.18.18" to "space + dots",
+                "12.32x09.18.18"  to "no space + dots"
+            ).forEach { (fmt, note) ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        fmt,
+                        color = Color.White,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        fontSize = 13.sp
+                    )
+                    Text(note, color = Color(0xFF64748B), fontSize = 11.sp)
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(80.dp))
     }
+}
+
+// ── Input normaliser ──────────────────────────────────────────────────────────
+//
+// Accepts every combination that can come off the clipboard:
+//   12.32x09:18:18   12.32x 09:18:18
+//   12.32x09.18.18   12.32x 09.18.18
+//   12.32X09.18.18   (uppercase X)
+//
+// Output is always:  "12.32x 09:18:18"
+
+private fun normalizeSignalInput(raw: String): String {
+    var s = raw.trim()
+
+    // Step 1 — convert dot-separated time segment to colons.
+    // Match a time-like token  NN.NN.NN  (1-2 digits . 2 digits . 2 digits)
+    // that follows the multiplier+x, optionally separated by whitespace.
+    // We do a global replace so it also works for manually typed dot times.
+    s = s.replace(Regex("""(\d{1,2})\.(\d{2})\.(\d{2})""")) { mr ->
+        "${mr.groupValues[1]}:${mr.groupValues[2]}:${mr.groupValues[3]}"
+    }
+
+    // Step 2 — ensure exactly one space between the multiplier and the time.
+    // Handles:  12.32x09:18:18  →  12.32x 09:18:18
+    //           12.32X 09:18:18 →  12.32x 09:18:18  (normalise case too)
+    s = s.replace(Regex("""([0-9.]+)\s*[xX]\s*(\d)"""), "$1x $2")
+
+    return s
 }
