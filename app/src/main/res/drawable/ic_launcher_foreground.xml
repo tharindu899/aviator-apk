@@ -1,357 +1,239 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    ic_launcher_foreground.xml
-    Place at: app/src/main/res/drawable/ic_launcher_foreground.xml
+    Adaptive icon foreground — 108 × 108 dp viewport.
+    Safe zone: inner 66 dp circle (radius 33 from centre 54,54).
+    Background: @color/ic_launcher_background = #0F172A (dark navy).
 
-    Adaptive icon foreground — drawn in the 108dp safe zone.
-    The inner 72dp (x=18..90, y=18..90) is guaranteed visible on all
-    launcher shapes (circle, squircle, rounded-rect, etc.).
-    All visual content stays within x=14..94, y=14..94.
+    Design:
+      • Two radial glow blobs (purple centre, pink near nose)
+      • Rising exponential trail with purple→pink gradient stroke
+      • Top-down airplane: plane faces RIGHT in path coords,
+        then the <group rotation="-45"> tilts it upper-right in the viewport.
+        Gradient coordinates are in VIEWPORT space, so after rotation:
+          nose  ≈ (68, 40) → pink (#F9A8D4)
+          tail  ≈ (40, 68) → dark purple (#6D28D9)
+      • Cockpit highlight, nose glow dot + pulse ring, sparkle dots along trail
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- ════════════════════════════════════════════════════════════
-         BACKGROUND GLOW LAYER  (subtle purple radial feel)
-         ════════════════════════════════════════════════════════════ -->
+    <!-- ── Centre purple radial glow ──────────────────────────────────── -->
+    <path android:pathData="M0,0 H108 V108 H0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient xmlns:android="http://schemas.android.com/apk/res/android"
+                android:type="radial"
+                android:centerX="54"
+                android:centerY="54"
+                android:gradientRadius="34">
+                <item android:offset="0"   android:color="#AA5B21B6"/>
+                <item android:offset="1"   android:color="#005B21B6"/>
+            </gradient>
+        </aapt:attr>
+    </path>
 
-    <!-- Soft centre bloom so the plane reads against the dark bg -->
+    <!-- ── Upper-right (nose area) pink radial glow ───────────────────── -->
+    <path android:pathData="M0,0 H108 V108 H0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient xmlns:android="http://schemas.android.com/apk/res/android"
+                android:type="radial"
+                android:centerX="72"
+                android:centerY="36"
+                android:gradientRadius="20">
+                <item android:offset="0"   android:color="#66BE185D"/>
+                <item android:offset="1"   android:color="#00BE185D"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- ── Subtle dot grid (5 × 5) ───────────────────────────────────── -->
+    <!-- Row y=26 -->
+    <path android:pathData="M26,26 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M40,26 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M54,26 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M68,26 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#228B5CF6"/>
+    <path android:pathData="M82,26 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <!-- Row y=40 -->
+    <path android:pathData="M26,40 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M40,40 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M54,40 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M82,40 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <!-- Row y=54 -->
+    <path android:pathData="M26,54 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M40,54 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M54,54 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M68,54 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M82,54 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <!-- Row y=68 -->
+    <path android:pathData="M26,68 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M40,68 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#228B5CF6"/>
+    <path android:pathData="M54,68 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M68,68 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M82,68 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <!-- Row y=82 -->
+    <path android:pathData="M26,82 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M40,82 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M54,82 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M68,82 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+    <path android:pathData="M82,82 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0 Z" android:fillColor="#338B5CF6"/>
+
+    <!-- ── Trail: wide soft glow pass ─────────────────────────────────── -->
     <path
-        android:fillColor="#33A855F7"
-        android:pathData="M54,54
-            m-32,0
-            a32,22 0 1,0 64,0
-            a32,22 0 1,0 -64,0 Z"/>
-
-    <!-- ════════════════════════════════════════════════════════════
-         SIGNAL / RADAR ARCS  (behind the plane)
-         ════════════════════════════════════════════════════════════ -->
-
-    <!-- Arc 1 — tight, bright purple -->
-    <path
+        android:pathData="M24,86 Q36,73 47,62 Q57,51 64,44 Q67,41 69,39"
         android:fillColor="#00000000"
-        android:strokeColor="#C084FC"
-        android:strokeWidth="1.1"
-        android:strokeLineCap="round"
-        android:pathData="M66,70 Q78,57 88,42"/>
+        android:strokeWidth="11"
+        android:strokeAlpha="0.11"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient xmlns:android="http://schemas.android.com/apk/res/android"
+                android:type="linear"
+                android:startX="24" android:startY="86"
+                android:endX="69"   android:endY="39">
+                <item android:offset="0"   android:color="#006D28D9"/>
+                <item android:offset="1"   android:color="#FFA855F7"/>
+            </gradient>
+        </aapt:attr>
+    </path>
 
-    <!-- Arc 2 — medium, softer -->
+    <!-- ── Trail: main coloured stroke ───────────────────────────────── -->
     <path
+        android:pathData="M24,86 Q36,73 47,62 Q57,51 64,44 Q67,41 69,39"
         android:fillColor="#00000000"
-        android:strokeColor="#A855F7"
-        android:strokeWidth="0.85"
-        android:strokeLineCap="round"
-        android:pathData="M60,76 Q78,55 92,34"/>
+        android:strokeWidth="3"
+        android:strokeLineCap="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient xmlns:android="http://schemas.android.com/apk/res/android"
+                android:type="linear"
+                android:startX="24" android:startY="86"
+                android:endX="69"   android:endY="39">
+                <item android:offset="0"    android:color="#006D28D9"/>
+                <item android:offset="0.45" android:color="#99A855F7"/>
+                <item android:offset="1"    android:color="#FFEC4899"/>
+            </gradient>
+        </aapt:attr>
+    </path>
 
-    <!-- Arc 3 — wide, very faint -->
+    <!-- ── Sparkle dots along the trail ───────────────────────────────── -->
+    <!-- dot at ~(36, 73) -->
+    <path android:pathData="M34,73 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 Z" android:fillColor="#889333EA"/>
+    <!-- dot at ~(47, 62) -->
+    <path android:pathData="M45,62 a1.8,1.8 0 1,0 3.6,0 a1.8,1.8 0 1,0 -3.6,0 Z" android:fillColor="#88A855F7"/>
+    <!-- dot at ~(57, 51) -->
+    <path android:pathData="M55,51 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 Z" android:fillColor="#88C084FC"/>
+
+    <!-- ── Plane: faces RIGHT in path-coords, -45° rotation → upper-right ── -->
+    <!--
+        Local coordinate system (before rotation, pivot 54,54):
+          Nose:          x=74, y=54  → viewport ≈ (68, 40)  — pink end
+          Tail centre:   x=34, y=54  → viewport ≈ (40, 68)  — purple end
+          Upper-wing tip: x=51, y=37 → viewport ≈ (40, 44)
+          Lower-wing tip: x=51, y=71 → viewport ≈ (64, 70)
+
+        Gradient startX/endX/Y are in VIEWPORT space and remain fixed while
+        the shapes rotate, giving nose=pink, tail=dark-purple automatically.
+    -->
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:rotation="-45">
+
+        <!-- Fuselage -->
+        <path android:pathData="M74,54 L67,52.3 L37,52.8 L34,54 L37,55.2 L67,55.7 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient xmlns:android="http://schemas.android.com/apk/res/android"
+                    android:type="linear"
+                    android:startX="68" android:startY="39"
+                    android:endX="40"   android:endY="69">
+                    <item android:offset="0"    android:color="#FFF9A8D4"/>
+                    <item android:offset="0.35" android:color="#FFC084FC"/>
+                    <item android:offset="1"    android:color="#FF6D28D9"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Upper wing (swept back) -->
+        <path android:pathData="M59,52.5 L51,37 L44,38.5 L49.5,52.5 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient xmlns:android="http://schemas.android.com/apk/res/android"
+                    android:type="linear"
+                    android:startX="68" android:startY="39"
+                    android:endX="40"   android:endY="69">
+                    <item android:offset="0"    android:color="#FFF9A8D4"/>
+                    <item android:offset="0.35" android:color="#FFC084FC"/>
+                    <item android:offset="1"    android:color="#FF6D28D9"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Lower wing (swept back, mirror of upper) -->
+        <path android:pathData="M59,55.5 L51,71 L44,69.5 L49.5,55.5 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient xmlns:android="http://schemas.android.com/apk/res/android"
+                    android:type="linear"
+                    android:startX="68" android:startY="39"
+                    android:endX="40"   android:endY="69">
+                    <item android:offset="0"    android:color="#FFF9A8D4"/>
+                    <item android:offset="0.35" android:color="#FFC084FC"/>
+                    <item android:offset="1"    android:color="#FF6D28D9"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Upper tail fin -->
+        <path android:pathData="M37,52.5 L32,46.5 L34.5,49.5 L37,52.5 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient xmlns:android="http://schemas.android.com/apk/res/android"
+                    android:type="linear"
+                    android:startX="68" android:startY="39"
+                    android:endX="40"   android:endY="69">
+                    <item android:offset="0"    android:color="#FFF9A8D4"/>
+                    <item android:offset="0.35" android:color="#FFC084FC"/>
+                    <item android:offset="1"    android:color="#FF6D28D9"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Lower tail fin -->
+        <path android:pathData="M37,55.5 L32,61.5 L34.5,58.5 L37,55.5 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient xmlns:android="http://schemas.android.com/apk/res/android"
+                    android:type="linear"
+                    android:startX="68" android:startY="39"
+                    android:endX="40"   android:endY="69">
+                    <item android:offset="0"    android:color="#FFF9A8D4"/>
+                    <item android:offset="0.35" android:color="#FFC084FC"/>
+                    <item android:offset="1"    android:color="#FF6D28D9"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Cockpit highlight (oval near nose) -->
+        <path
+            android:pathData="M62.5,54 a3.5,2.2 0 1,0 7,0 a3.5,2.2 0 1,0 -7,0 Z"
+            android:fillColor="#33FFFFFF"/>
+
+    </group>
+
+    <!-- ── Nose glow dot at viewport ≈ (68, 40) ──────────────────────── -->
     <path
+        android:pathData="M65.5,40 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0 Z"
+        android:fillColor="#FFEC4899"/>
+
+    <!-- Nose pulse ring (inner) -->
+    <path
+        android:pathData="M63,40 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0 Z"
         android:fillColor="#00000000"
-        android:strokeColor="#9333EA"
-        android:strokeWidth="0.6"
-        android:strokeLineCap="round"
-        android:pathData="M54,82 Q78,53 94,26"/>
+        android:strokeColor="#88EC4899"
+        android:strokeWidth="1.2"/>
 
-    <!-- Signal origin dot -->
+    <!-- Nose pulse ring (outer, faint) -->
     <path
-        android:fillColor="#EC4899"
-        android:pathData="M63,72
-            m-4,0
-            a4,4 0 1,0 8,0
-            a4,4 0 1,0 -8,0 Z"/>
-
-    <!-- Outer pulse ring around origin dot -->
-    <path
-        android:fillColor="#33EC4899"
-        android:pathData="M63,72
-            m-7,0
-            a7,7 0 1,0 14,0
-            a7,7 0 1,0 -14,0 Z"/>
-
-    <!-- ════════════════════════════════════════════════════════════
-         SPEED LINES  (left of plane, gives motion)
-         ════════════════════════════════════════════════════════════ -->
-
-    <path
+        android:pathData="M60.5,40 a7.5,7.5 0 1,0 15,0 a7.5,7.5 0 1,0 -15,0 Z"
         android:fillColor="#00000000"
-        android:strokeColor="#A855F7"
-        android:strokeWidth="1.1"
-        android:strokeLineCap="round"
-        android:pathData="M14,50 L26,50"/>
-
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#A855F7"
-        android:strokeWidth="0.85"
-        android:strokeLineCap="round"
-        android:pathData="M16,54 L26,54"/>
-
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#C084FC"
-        android:strokeWidth="0.65"
-        android:strokeLineCap="round"
-        android:pathData="M18,58 L27,58"/>
-
-    <!-- ════════════════════════════════════════════════════════════
-         AIRCRAFT — rotated ~-28° to fly upper-right
-         All paths are pre-rotated; pivot = (54, 54)
-         ════════════════════════════════════════════════════════════ -->
-
-    <!-- – – TAIL FINS – – -->
-
-    <!-- Upper horizontal stabiliser -->
-    <path
-        android:fillColor="#7C3AED"
-        android:pathData="
-            M29,47
-            L21,33
-            L16,35
-            L24,47
-            Z"/>
-
-    <!-- Lower horizontal stabiliser -->
-    <path
-        android:fillColor="#7C3AED"
-        android:pathData="
-            M29,57
-            L21,71
-            L16,69
-            L24,57
-            Z"/>
-
-    <!-- Vertical tail fin -->
-    <path
-        android:fillColor="#9333EA"
-        android:pathData="
-            M24,52
-            L14,35
-            L18,33
-            L28,50
-            Z"/>
-
-    <!-- Tail-fin highlight edge -->
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#C084FC"
-        android:strokeWidth="0.7"
-        android:strokeLineCap="round"
-        android:pathData="M24,52 L14,35"/>
-
-    <!-- – – ENGINE PODS – – -->
-
-    <!-- Upper engine nacelle -->
-    <path
-        android:fillColor="#5B21B6"
-        android:pathData="
-            M36,36
-            Q50,31 64,36
-            Q50,41 36,36
-            Z"/>
-
-    <!-- Upper engine intake -->
-    <path
-        android:fillColor="#3B0764"
-        android:pathData="
-            M36,34
-            Q34,36 36,38
-            Q38,36 36,34
-            Z"/>
-
-    <!-- Upper engine exhaust glow -->
-    <path
-        android:fillColor="#F0ABFC"
-        android:pathData="
-            M37,35
-            Q35.5,36 37,37
-            Q38.5,36 37,35
-            Z"/>
-
-    <!-- Lower engine nacelle -->
-    <path
-        android:fillColor="#5B21B6"
-        android:pathData="
-            M36,72
-            Q50,67 64,72
-            Q50,77 36,72
-            Z"/>
-
-    <!-- Lower engine intake -->
-    <path
-        android:fillColor="#3B0764"
-        android:pathData="
-            M36,70
-            Q34,72 36,74
-            Q38,72 36,70
-            Z"/>
-
-    <!-- Lower engine exhaust glow -->
-    <path
-        android:fillColor="#F0ABFC"
-        android:pathData="
-            M37,71
-            Q35.5,72 37,73
-            Q38.5,72 37,71
-            Z"/>
-
-    <!-- – – MAIN WINGS – – -->
-
-    <!-- Upper wing -->
-    <path
-        android:fillColor="#A855F7"
-        android:pathData="
-            M60,49
-            L48,20
-            L22,25
-            L32,49
-            Z"/>
-
-    <!-- Upper wing highlight edge -->
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#DDD6FE"
-        android:strokeWidth="0.9"
-        android:strokeLineCap="round"
-        android:pathData="M60,49 L48,20"/>
-
-    <!-- Lower wing -->
-    <path
-        android:fillColor="#A855F7"
-        android:pathData="
-            M60,59
-            L48,88
-            L22,83
-            L32,59
-            Z"/>
-
-    <!-- Lower wing highlight edge -->
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#DDD6FE"
-        android:strokeWidth="0.9"
-        android:strokeLineCap="round"
-        android:pathData="M60,59 L48,88"/>
-
-    <!-- Wing-body fairing (blends wing root into fuselage) -->
-    <path
-        android:fillColor="#9333EA"
-        android:pathData="
-            M56,50
-            L44,24
-            L48,22
-            L62,50
-            Z"/>
-    <path
-        android:fillColor="#9333EA"
-        android:pathData="
-            M56,58
-            L44,84
-            L48,86
-            L62,58
-            Z"/>
-
-    <!-- – – FUSELAGE – – -->
-
-    <!-- Main tube -->
-    <path
-        android:fillColor="#E9D5FF"
-        android:pathData="
-            M28,50
-            Q28,44 54,44
-            Q80,44 94,50
-            Q80,56 54,56
-            Q28,56 28,50
-            Z"/>
-
-    <!-- Fuselage shading (top) — gives slight 3-D feel -->
-    <path
-        android:fillColor="#C4B5FD"
-        android:pathData="
-            M28,50
-            Q28,44 54,44
-            Q80,44 94,50
-            Q80,48 54,48
-            Q28,48 28,50
-            Z"/>
-
-    <!-- – – NOSE CONE – – -->
-
-    <!-- Pink nose -->
-    <path
-        android:fillColor="#EC4899"
-        android:pathData="
-            M91,50
-            Q100,46 108,50
-            Q100,54 91,50
-            Z"/>
-
-    <!-- Nose highlight -->
-    <path
-        android:fillColor="#FBCFE8"
-        android:pathData="
-            M93,50
-            Q100,47 106,50
-            Q100,52 93,50
-            Z"/>
-
-    <!-- – – COCKPIT WINDOWS – – -->
-
-    <!-- Window 1 -->
-    <path
-        android:fillColor="#F3E8FF"
-        android:pathData="
-            M75,47
-            a3.2,3.2 0 1,0 0.01,0
-            Z"/>
-
-    <!-- Window 2 -->
-    <path
-        android:fillColor="#EDE9FE"
-        android:pathData="
-            M65,47
-            a3.2,3.2 0 1,0 0.01,0
-            Z"/>
-
-    <!-- Window 3 (smaller) -->
-    <path
-        android:fillColor="#DDD6FE"
-        android:pathData="
-            M56,47.5
-            a2.5,2.5 0 1,0 0.01,0
-            Z"/>
-
-    <!-- Window glint -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="
-            M76,47
-            a1,1 0 1,0 0.01,0
-            Z"/>
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="
-            M66,47
-            a1,1 0 1,0 0.01,0
-            Z"/>
-
-    <!-- – – DESTINATION DOT (upper right) – – -->
-
-    <path
-        android:fillColor="#C084FC"
-        android:pathData="
-            M88,28
-            m-4,0
-            a4,4 0 1,0 8,0
-            a4,4 0 1,0 -8,0 Z"/>
-
-    <path
-        android:fillColor="#33C084FC"
-        android:pathData="
-            M88,28
-            m-7,0
-            a7,7 0 1,0 14,0
-            a7,7 0 1,0 -14,0 Z"/>
+        android:strokeColor="#44A855F7"
+        android:strokeWidth="0.8"/>
 
 </vector>
