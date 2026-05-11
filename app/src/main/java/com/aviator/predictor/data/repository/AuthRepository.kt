@@ -20,6 +20,8 @@ import java.util.UUID
 // ── DataStore instance (one per app) ─────────────────────────────────────────
 private val Context.sessionDataStore by preferencesDataStore(name = "aviator_session")
 
+private const val DRIVE_SCOPE = "oauth2:https://www.googleapis.com/auth/drive.appdata"
+
 data class AuthResult(
     val success: Boolean,
     val token: String = "",
@@ -39,23 +41,14 @@ class AuthRepository(private val context: Context) {
     private val KEY_UID          = stringPreferencesKey("uid")
 
     // ── Restore session (called on every app start — no UI shown) ─────────
-    //
-    // Reads the saved email from DataStore, then calls GoogleAuthUtil.getToken()
-    // to silently obtain a fresh OAuth token.  Returns success if the account
-    // is still on the device and hasn't revoked permissions; otherwise the
-    // caller should show the sign-in screen.
     suspend fun tryRestoreSession(): AuthResult = withContext(Dispatchers.IO) {
         try {
             val prefs = context.sessionDataStore.data.first()
             val email = prefs[KEY_EMAIL]
                 ?: return@withContext AuthResult(false, error = "No saved session")
 
-            // Get a fresh token without any UI
-            val token = GoogleAuthUtil.getToken(
-                context,
-                email,
-                "oauth2:https://www.googleapis.com/auth/drive.appdata"
-            ) ?: return@withContext AuthResult(false, error = "Token refresh failed")
+            val token = getTokenForEmail(email)
+                ?: return@withContext AuthResult(false, error = "Token refresh failed")
 
             val profile = UserProfile(
                 uid         = prefs[KEY_UID]          ?: email,
@@ -67,7 +60,6 @@ class AuthRepository(private val context: Context) {
 
             AuthResult(success = true, token = token, profile = profile)
         } catch (e: Exception) {
-            // Token fetch failed (revoked, account removed, no network on first cold boot)
             AuthResult(false, error = "Session restore failed: ${e.message}")
         }
     }
@@ -83,12 +75,9 @@ class AuthRepository(private val context: Context) {
                 .addCredentialOption(signInOption)
                 .build()
 
-            val result = credentialManager.getCredential(
-                request = request,
-                context = activity
-            )
-
+            val result = credentialManager.getCredential(request = request, context = activity)
             val credential = result.credential
+
             if (credential is CustomCredential &&
                 credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
             ) {
@@ -96,27 +85,21 @@ class AuthRepository(private val context: Context) {
                 val idToken    = googleCred.idToken
                 val email      = googleCred.id
 
-                val accessToken = getDriveAccessToken(email)
+                val accessToken = getTokenForEmail(email)
                     ?: return@withContext AuthResult(false, error = "Failed to get Drive access token")
 
                 val profile = UserProfile(
-                    uid          = email,
-                    email        = email,
-                    displayName  = googleCred.displayName ?: "",
-                    photoUrl     = googleCred.profilePictureUri?.toString() ?: "",
-                    createdAt    = System.currentTimeMillis(),
-                    lastLoginAt  = System.currentTimeMillis()
+                    uid         = email,
+                    email       = email,
+                    displayName = googleCred.displayName ?: "",
+                    photoUrl    = googleCred.profilePictureUri?.toString() ?: "",
+                    createdAt   = System.currentTimeMillis(),
+                    lastLoginAt = System.currentTimeMillis()
                 )
 
-                // ── Persist session so next launch skips the sign-in screen ──
                 saveSession(profile)
 
-                AuthResult(
-                    success = true,
-                    token   = accessToken,
-                    idToken = idToken,
-                    profile = profile
-                )
+                AuthResult(success = true, token = accessToken, idToken = idToken, profile = profile)
             } else {
                 AuthResult(false, error = "Unsupported credential type")
             }
@@ -131,6 +114,39 @@ class AuthRepository(private val context: Context) {
             AuthResult(false, error = "Unexpected error: ${e.message}")
         }
     }
+
+    // ── Token helpers ─────────────────────────────────────────────────────
+
+    /**
+     * Returns a valid (possibly cached) access token.
+     * GoogleAuthUtil.getToken() handles cache internally and refreshes
+     * automatically when needed. Call this for normal operations.
+     */
+    private suspend fun getTokenForEmail(email: String): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                GoogleAuthUtil.getToken(context, email, DRIVE_SCOPE)
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+    /**
+     * Force-refreshes the access token by clearing the cached copy first.
+     * Call this after receiving an HTTP 401 from the Drive API.
+     *
+     * @return fresh token, or null if refresh fails (session revoked / no network)
+     */
+    suspend fun refreshAccessToken(email: String): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                // Invalidate the cached token so getToken() must fetch a new one
+                GoogleAuthUtil.clearToken(context, email, DRIVE_SCOPE)
+                GoogleAuthUtil.getToken(context, email, DRIVE_SCOPE)
+            } catch (e: Exception) {
+                null
+            }
+        }
 
     // ── Save / clear session ──────────────────────────────────────────────
 
@@ -147,25 +163,20 @@ class AuthRepository(private val context: Context) {
         context.sessionDataStore.edit { it.clear() }
     }
 
-    // ── Drive OAuth token ─────────────────────────────────────────────────
+    // ── Retrieve the saved email (needed for token refresh from ViewModel) ─
 
-    private suspend fun getDriveAccessToken(email: String): String? =
-        withContext(Dispatchers.IO) {
-            try {
-                GoogleAuthUtil.getToken(
-                    context,
-                    email,
-                    "oauth2:https://www.googleapis.com/auth/drive.appdata"
-                )
-            } catch (e: Exception) {
-                null
-            }
+    suspend fun getSavedEmail(): String? {
+        return try {
+            context.sessionDataStore.data.first()[KEY_EMAIL]
+        } catch (e: Exception) {
+            null
         }
+    }
 
     suspend fun signOut() {
         try {
             credentialManager.clearCredentialState(ClearCredentialStateRequest())
         } catch (_: Exception) {}
-        clearSession()   // ← wipe saved email so next launch shows sign-in
+        clearSession()
     }
 }

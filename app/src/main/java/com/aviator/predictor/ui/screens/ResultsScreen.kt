@@ -2,9 +2,11 @@ package com.aviator.predictor.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -31,7 +33,7 @@ fun ResultsScreen(
     onReset: (String) -> Unit,
     onDelete: (String) -> Unit
 ) {
-    var filter by remember { mutableStateOf("all") }
+    var filter      by remember { mutableStateOf("all") }
     var searchQuery by remember { mutableStateOf("") }
     var deleteTarget by remember { mutableStateOf<String?>(null) }
 
@@ -54,14 +56,14 @@ fun ResultsScreen(
         }
         .sortedByDescending { it.createdAt }
 
-    // Stats row
-    val wins = signals.count { it.status == SignalStatus.WIN }
-    val losses = signals.count { it.status == SignalStatus.LOSS }
+    val wins      = signals.count { it.status == SignalStatus.WIN }
+    val losses    = signals.count { it.status == SignalStatus.LOSS }
     val completed = wins + losses
-    val winRate = if (completed > 0) (wins * 100) / completed else 0
+    val winRate   = if (completed > 0) (wins * 100) / completed else 0
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Stats strip
+
+        // ── Stats strip ───────────────────────────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -70,14 +72,14 @@ fun ResultsScreen(
         ) {
             listOf(
                 Triple("Total", signals.size, BrandPurple),
-                Triple("Won", wins, GreenActive),
-                Triple("Lost", losses, RedClosed),
-                Triple("Win%", winRate, BlueInfo)
+                Triple("Won",   wins,         GreenActive),
+                Triple("Lost",  losses,        RedClosed),
+                Triple("Win%",  winRate,       BlueInfo)
             ).forEach { (label, value, color) ->
                 Card(
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f))
+                    shape    = RoundedCornerShape(12.dp),
+                    colors   = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f))
                 ) {
                     Column(modifier = Modifier.padding(8.dp)) {
                         Text(label, color = color.copy(alpha = 0.8f), fontSize = 10.sp)
@@ -90,41 +92,53 @@ fun ResultsScreen(
             }
         }
 
-        // Filter chips
+        // ── Filter chips — single row, horizontal scroll, no wrap ─────────
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp),
+                .horizontalScroll(rememberScrollState())   // ← scrollable, not wrapping
+                .padding(horizontal = 12.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             filters.forEach { f ->
                 val selected = filter == f
                 FilterChip(
                     selected = selected,
-                    onClick = { filter = f },
-                    label = {
+                    onClick  = { filter = f },
+                    label    = {
                         Text(
                             "${f.replaceFirstChar { it.uppercase() }} (${filterCounts[f]})",
-                            fontSize = 11.sp
+                            fontSize = 11.sp,
+                            maxLines = 1
                         )
                     },
+                    shape  = RoundedCornerShape(20.dp),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = BrandPurple.copy(alpha = 0.3f),
-                        selectedLabelColor = BrandPurple
+                        selectedLabelColor     = BrandPurple,
+                        containerColor         = Color(0xFF1E293B),
+                        labelColor             = Color(0xFFCBD5E1)
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled       = true,
+                        selected      = selected,
+                        borderColor   = if (selected) BrandPurple else Color(0xFF334155),
+                        selectedBorderColor = BrandPurple
                     )
                 )
             }
         }
 
-        // Search
+        // ── Search ────────────────────────────────────────────────────────
         OutlinedTextField(
-            value = searchQuery,
+            value         = searchQuery,
             onValueChange = { searchQuery = it },
-            modifier = Modifier
+            modifier      = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            placeholder = { Text("Search by odd, status, time…", color = Color(0xFF64748B), fontSize = 13.sp) },
-            leadingIcon = { Icon(Icons.Filled.Search, null, tint = Color(0xFF94A3B8)) },
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            placeholder   = {
+                Text("Search by odd, status, time…", color = Color(0xFF64748B), fontSize = 13.sp)
+            },
+            leadingIcon  = { Icon(Icons.Filled.Search, null, tint = Color(0xFF94A3B8)) },
             trailingIcon = {
                 if (searchQuery.isNotBlank()) {
                     IconButton(onClick = { searchQuery = "" }) {
@@ -133,19 +147,24 @@ fun ResultsScreen(
                 }
             },
             singleLine = true,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = BrandPurple,
+            colors     = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor   = BrandPurple,
                 unfocusedBorderColor = Color(0xFF334155),
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White
+                focusedTextColor     = Color.White,
+                unfocusedTextColor   = Color.White
             ),
             shape = RoundedCornerShape(14.dp)
         )
 
+        // ── Empty state ───────────────────────────────────────────────────
         if (signals.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Filled.BarChart, null, tint = BrandPurple.copy(0.3f), modifier = Modifier.size(64.dp))
+                    Icon(
+                        Icons.Filled.BarChart, null,
+                        tint     = BrandPurple.copy(0.3f),
+                        modifier = Modifier.size(64.dp)
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text("No results yet", color = Color(0xFF94A3B8), fontSize = 16.sp)
                 }
@@ -158,17 +177,18 @@ fun ResultsScreen(
                 item {
                     Text(
                         "Showing ${filtered.size} of ${signals.size}",
-                        color = Color(0xFF64748B), fontSize = 12.sp,
+                        color    = Color(0xFF64748B),
+                        fontSize = 12.sp,
                         modifier = Modifier.padding(vertical = 4.dp)
                     )
                 }
                 items(filtered, key = { it.id }) { signal ->
                     ResultCard(
-                        signal = signal,
-                        onMarkWin = onMarkWin,
+                        signal     = signal,
+                        onMarkWin  = onMarkWin,
                         onMarkLoss = onMarkLoss,
-                        onReset = onReset,
-                        onDelete = { deleteTarget = signal.id }
+                        onReset    = onReset,
+                        onDelete   = { deleteTarget = signal.id }
                     )
                 }
                 item { Spacer(modifier = Modifier.height(80.dp)) }
@@ -176,18 +196,17 @@ fun ResultsScreen(
         }
     }
 
-    // Delete confirmation dialog
+    // ── Delete confirmation dialog ─────────────────────────────────────────
     deleteTarget?.let { id ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
-            containerColor = SlateSurface,
-            title = { Text("Delete Signal?", color = Color.White) },
-            text = { Text("This cannot be undone.", color = Color(0xFF94A3B8)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    onDelete(id)
-                    deleteTarget = null
-                }) { Text("Delete", color = RedClosed, fontWeight = FontWeight.Bold) }
+            containerColor   = SlateSurface,
+            title            = { Text("Delete Signal?", color = Color.White) },
+            text             = { Text("This cannot be undone.", color = Color(0xFF94A3B8)) },
+            confirmButton    = {
+                TextButton(onClick = { onDelete(id); deleteTarget = null }) {
+                    Text("Delete", color = RedClosed, fontWeight = FontWeight.Bold)
+                }
             },
             dismissButton = {
                 TextButton(onClick = { deleteTarget = null }) {
@@ -197,6 +216,8 @@ fun ResultsScreen(
         )
     }
 }
+
+// ── Result card ───────────────────────────────────────────────────────────────
 
 @Composable
 private fun ResultCard(
@@ -208,33 +229,37 @@ private fun ResultCard(
 ) {
     val countdown = if (signal.status == SignalStatus.PENDING)
         TimeCalculations.getCountdown(signal) else null
-    val isActive = countdown != null && countdown > -45 && countdown <= 45
+    val isActive  = countdown != null && countdown > -45 && countdown <= 45
 
     val borderColor = when {
-        isActive -> GreenActive
-        signal.status == SignalStatus.WIN -> GreenActive.copy(alpha = 0.4f)
-        signal.status == SignalStatus.LOSS -> RedClosed.copy(alpha = 0.4f)
+        isActive                          -> GreenActive
+        signal.status == SignalStatus.WIN    -> GreenActive.copy(alpha = 0.4f)
+        signal.status == SignalStatus.LOSS   -> RedClosed.copy(alpha = 0.4f)
         signal.status == SignalStatus.MISSED -> Color(0xFF475569)
-        else -> BrandPurple.copy(alpha = 0.3f)
+        else                              -> BrandPurple.copy(alpha = 0.3f)
     }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .border(1.dp, borderColor, RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp),
+        shape  = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0x661E293B))
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
+
+            // Time + status row
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier              = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment     = Alignment.CenterVertically
             ) {
                 Column {
                     Text(
                         Formatters.formatTime(signal.resultTime),
-                        color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp,
+                        color      = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize   = 20.sp,
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                     )
                     Text("${String.format("%.2f", signal.odd)}x", color = Color(0xFF94A3B8), fontSize = 12.sp)
@@ -252,20 +277,15 @@ private fun ResultCard(
             }
 
             Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                Formatters.formatDateTime(signal.createdAt),
-                color = Color(0xFF64748B), fontSize = 11.sp
-            )
+            Text(Formatters.formatDateTime(signal.createdAt), color = Color(0xFF64748B), fontSize = 11.sp)
 
             // Window times
             val wt = signal.windowTimes ?: TimeCalculations.getBetWindowTimes(signal.resultTime)
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
+                modifier              = Modifier.fillMaxWidth().padding(top = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                WindowTimeCell("OPEN", Formatters.formatTime(wt.openTime))
+                WindowTimeCell("OPEN",  Formatters.formatTime(wt.openTime))
                 WindowTimeCell("CLOSE", Formatters.formatTime(wt.closeTime))
             }
 
@@ -282,7 +302,7 @@ private fun ResultCard(
                     Text(
                         "ACTIVE NOW", color = GreenActive,
                         fontWeight = FontWeight.Bold, fontSize = 12.sp,
-                        modifier = Modifier.padding(vertical = 4.dp)
+                        modifier   = Modifier.padding(vertical = 4.dp)
                     )
                 }
             }
@@ -290,26 +310,25 @@ private fun ResultCard(
             // Actions
             Spacer(modifier = Modifier.height(8.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier              = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 if (signal.status == SignalStatus.PENDING) {
                     OutlinedButton(
-                        onClick = { onMarkWin(signal.id) },
+                        onClick  = { onMarkWin(signal.id) },
                         modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(10.dp),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = GreenActive)
+                        shape    = RoundedCornerShape(10.dp),
+                        colors   = ButtonDefaults.outlinedButtonColors(contentColor = GreenActive)
                     ) {
                         Icon(Icons.Filled.CheckCircle, null, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("Win", fontSize = 12.sp)
                     }
                     OutlinedButton(
-                        onClick = { onMarkLoss(signal.id) },
+                        onClick  = { onMarkLoss(signal.id) },
                         modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = RedClosed)
+                        shape    = RoundedCornerShape(10.dp),
+                        colors   = ButtonDefaults.outlinedButtonColors(contentColor = RedClosed)
                     ) {
                         Icon(Icons.Filled.Cancel, null, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -317,10 +336,10 @@ private fun ResultCard(
                     }
                 } else {
                     OutlinedButton(
-                        onClick = { onReset(signal.id) },
+                        onClick  = { onReset(signal.id) },
                         modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandPurple)
+                        shape    = RoundedCornerShape(10.dp),
+                        colors   = ButtonDefaults.outlinedButtonColors(contentColor = BrandPurple)
                     ) {
                         Icon(Icons.Filled.Refresh, null, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -328,7 +347,7 @@ private fun ResultCard(
                     }
                 }
                 IconButton(
-                    onClick = onDelete,
+                    onClick  = onDelete,
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
                         .background(RedClosed.copy(alpha = 0.1f))

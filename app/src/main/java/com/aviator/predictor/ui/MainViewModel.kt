@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import com.aviator.predictor.BuildConfig
 import com.aviator.predictor.data.models.*
 import com.aviator.predictor.data.repository.AuthRepository
+import com.aviator.predictor.data.repository.DriveAuthException
 import com.aviator.predictor.data.repository.DriveRepository
 import com.aviator.predictor.utils.*
 import kotlinx.coroutines.*
@@ -24,22 +25,13 @@ enum class SyncStatus { PENDING, SYNCING, SYNCED, OFFLINE, ERROR }
 
 sealed class UpdateDownloadState {
     object Idle : UpdateDownloadState()
-
-    /**
-     * @param percent         0–100
-     * @param downloadedMb    bytes downloaded, expressed in MB
-     * @param totalMb         total file size in MB (0 if unknown)
-     * @param etaSeconds      estimated seconds remaining (0 if unknown)
-     * @param speedKbps       current download speed in KB/s
-     */
     data class Downloading(
-        val percent: Int       = 0,
+        val percent: Int        = 0,
         val downloadedMb: Float = 0f,
-        val totalMb: Float     = 0f,
-        val etaSeconds: Int    = 0,
-        val speedKbps: Float   = 0f
+        val totalMb: Float      = 0f,
+        val etaSeconds: Int     = 0,
+        val speedKbps: Float    = 0f
     ) : UpdateDownloadState()
-
     data class ReadyToInstall(val file: File) : UpdateDownloadState()
     object Failed : UpdateDownloadState()
 }
@@ -57,7 +49,6 @@ data class AppUiState(
     val error: String? = null,
     val upcomingSignals: List<SignalWithWindow> = emptyList(),
     val currentSignal: SignalWithWindow? = null,
-    // ── Update ──────────────────────────────────────────────────────────────
     val updateInfo: UpdateInfo? = null,
     val showUpdateDialog: Boolean = false,
     val updateDownloadState: UpdateDownloadState = UpdateDownloadState.Idle
@@ -71,13 +62,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(AppUiState())
     val state: StateFlow<AppUiState> = _state.asStateFlow()
 
-    private var countdownJob: Job? = null
-    private var syncJob: Job? = null
-    private var autoMarkJob: Job? = null
-    private var downloadJob: Job? = null
+    private var countdownJob:    Job? = null
+    private var syncJob:         Job? = null
+    private var autoMarkJob:     Job? = null
+    private var downloadJob:     Job? = null
+    private var tokenRefreshJob: Job? = null
     private var activeDownloadId: Long = -1L
-
-    // Download speed tracking
     private var downloadStartTimeMs: Long = 0L
 
     private val notifiedSignalIds = mutableSetOf<String>()
@@ -87,6 +77,65 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         startAutoMarkMissed()
         collectPendingActions()
         tryRestoreSession()
+    }
+
+    // ── Token management ──────────────────────────────────────────────────
+
+    /**
+     * Returns the current token, or a freshly-fetched one if the stored token
+     * is blank. Never called under heavy concurrency — callers use [withFreshToken].
+     */
+    private suspend fun currentToken(): String {
+        val stored = _state.value.accessToken
+        if (stored.isNotBlank()) return stored
+
+        val email = _state.value.user?.email ?: return ""
+        val fresh = authRepo.refreshAccessToken(email) ?: return ""
+        _state.update { it.copy(accessToken = fresh) }
+        return fresh
+    }
+
+    /**
+     * Executes [block] with the current token.
+     * If [block] throws [DriveAuthException] (HTTP 401), it force-refreshes the
+     * token and retries exactly once. On the second failure the exception
+     * propagates to the caller.
+     */
+    private suspend fun <T> withFreshToken(block: suspend (token: String) -> T): T {
+        return try {
+            block(currentToken())
+        } catch (e: DriveAuthException) {
+            // Token expired — force-refresh and retry once
+            val email = _state.value.user?.email
+                ?: throw e   // can't refresh without email → propagate
+
+            val newToken = authRepo.refreshAccessToken(email)
+                ?: throw Exception("Token refresh failed — please sign in again")
+
+            _state.update { it.copy(accessToken = newToken) }
+            driveRepo.clearCache()   // file IDs may have been fetched with the old token
+            block(newToken)          // one more try — if this throws, caller handles it
+        }
+    }
+
+    /**
+     * Periodic token refresh — runs every 45 minutes while signed in.
+     * Google tokens expire after 60 minutes; refreshing proactively avoids
+     * mid-operation 401s in heavy usage sessions.
+     */
+    private fun startTokenRefreshLoop() {
+        tokenRefreshJob?.cancel()
+        tokenRefreshJob = viewModelScope.launch {
+            while (isActive) {
+                delay(45 * 60 * 1000L)          // 45 minutes
+                if (!_state.value.isSignedIn) continue
+                val email = _state.value.user?.email ?: continue
+                val fresh = authRepo.refreshAccessToken(email)
+                if (fresh != null) {
+                    _state.update { it.copy(accessToken = fresh) }
+                }
+            }
+        }
     }
 
     // ── Session restore ───────────────────────────────────────────────────
@@ -106,6 +155,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 loadAllData(result.token)
                 startCountdownUpdater()
                 startPeriodicSync()
+                startTokenRefreshLoop()
             } else {
                 _state.update { it.copy(isAuthLoading = false) }
             }
@@ -131,6 +181,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 loadAllData(result.token)
                 startCountdownUpdater()
                 startPeriodicSync()
+                startTokenRefreshLoop()
             } else {
                 _state.update { it.copy(isAuthLoading = false, error = result.error) }
             }
@@ -143,6 +194,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             driveRepo.clearCache()
             countdownJob?.cancel()
             syncJob?.cancel()
+            tokenRefreshJob?.cancel()
             cancelDownloadIfActive()
             NotificationHelper.cancelAll(getApplication())
             notifiedSignalIds.clear()
@@ -174,9 +226,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val existing = UpdateInstaller.findDownloadedApk(context, info.apkFileName)
         if (existing != null) {
-            _state.update {
-                it.copy(updateDownloadState = UpdateDownloadState.ReadyToInstall(existing))
-            }
+            _state.update { it.copy(updateDownloadState = UpdateDownloadState.ReadyToInstall(existing)) }
             return
         }
 
@@ -193,47 +243,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        activeDownloadId   = downloadId
+        activeDownloadId    = downloadId
         downloadStartTimeMs = System.currentTimeMillis()
 
-        _state.update {
-            it.copy(updateDownloadState = UpdateDownloadState.Downloading(percent = 0))
-        }
+        _state.update { it.copy(updateDownloadState = UpdateDownloadState.Downloading(percent = 0)) }
 
         downloadJob = viewModelScope.launch {
             UpdateInstaller.pollProgress(context, downloadId, info.apkFileName) { progress ->
                 when {
-                    progress.isFailed -> {
-                        _state.update { it.copy(updateDownloadState = UpdateDownloadState.Failed) }
+                    progress.isFailed -> _state.update {
+                        it.copy(updateDownloadState = UpdateDownloadState.Failed)
                     }
-                    progress.isComplete && progress.localFile != null -> {
-                        _state.update {
-                            it.copy(
-                                updateDownloadState = UpdateDownloadState.ReadyToInstall(progress.localFile)
-                            )
-                        }
+                    progress.isComplete && progress.localFile != null -> _state.update {
+                        it.copy(updateDownloadState = UpdateDownloadState.ReadyToInstall(progress.localFile))
                     }
                     else -> {
-                        // Compute speed and ETA from elapsed time
-                        val elapsedSec = (System.currentTimeMillis() - downloadStartTimeMs) / 1000f
-                        val speedBytesPerSec = if (elapsedSec > 0 && progress.downloadedBytes > 0) {
-                            progress.downloadedBytes / elapsedSec
-                        } else 0f
+                        val elapsedSec    = (System.currentTimeMillis() - downloadStartTimeMs) / 1000f
+                        val speedBps      = if (elapsedSec > 0 && progress.downloadedBytes > 0)
+                            progress.downloadedBytes / elapsedSec else 0f
                         val remainingBytes = (progress.totalBytes - progress.downloadedBytes).coerceAtLeast(0L)
-                        val eta = if (speedBytesPerSec > 1024f) {
-                            (remainingBytes / speedBytesPerSec).toInt()
-                        } else 0
-
+                        val eta           = if (speedBps > 1024f) (remainingBytes / speedBps).toInt() else 0
                         _state.update {
-                            it.copy(
-                                updateDownloadState = UpdateDownloadState.Downloading(
-                                    percent      = progress.percent,
-                                    downloadedMb = progress.downloadedBytes / (1024f * 1024f),
-                                    totalMb      = progress.totalBytes / (1024f * 1024f),
-                                    etaSeconds   = eta,
-                                    speedKbps    = speedBytesPerSec / 1024f
-                                )
-                            )
+                            it.copy(updateDownloadState = UpdateDownloadState.Downloading(
+                                percent       = progress.percent,
+                                downloadedMb  = progress.downloadedBytes / (1024f * 1024f),
+                                totalMb       = progress.totalBytes / (1024f * 1024f),
+                                etaSeconds    = eta,
+                                speedKbps     = speedBps / 1024f
+                            ))
                         }
                     }
                 }
@@ -241,19 +278,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── Install ───────────────────────────────────────────────────────────
-
     fun installUpdate() {
         val dlState = _state.value.updateDownloadState
         val context = getApplication<Application>()
         if (dlState !is UpdateDownloadState.ReadyToInstall) return
         if (!UpdateInstaller.canInstall(context)) {
-            UpdateInstaller.openInstallPermissionSettings(context)
-            return
+            UpdateInstaller.openInstallPermissionSettings(context); return
         }
         if (!dlState.file.exists()) {
-            _state.update { it.copy(updateDownloadState = UpdateDownloadState.Failed) }
-            return
+            _state.update { it.copy(updateDownloadState = UpdateDownloadState.Failed) }; return
         }
         UpdateInstaller.installApk(context, dlState.file)
     }
@@ -272,9 +305,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun loadAllData(token: String) {
         _state.update { it.copy(isLoading = true, syncStatus = SyncStatus.SYNCING) }
         try {
-            val signals  = driveRepo.loadSignals(token)
-            val settings = driveRepo.loadSettings(token)
-            val profile  = driveRepo.loadProfile(token)
+            val signals  = withFreshToken { t -> driveRepo.loadSignals(t) }
+            val settings = withFreshToken { t -> driveRepo.loadSettings(t) }
+            val profile  = withFreshToken { t -> driveRepo.loadProfile(t) }
             val computed = computeUpcoming(signals)
             _state.update {
                 it.copy(
@@ -291,17 +324,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.update {
                 it.copy(
                     isLoading  = false,
-                    syncStatus = SyncStatus.ERROR,
-                    error      = "Sync failed: ${e.message}"
+                    syncStatus = if (e is DriveAuthException) SyncStatus.ERROR else SyncStatus.OFFLINE,
+                    error      = if (e is DriveAuthException) "Session expired — please sign in again"
+                                 else "Sync failed: ${e.message}"
                 )
             }
         }
     }
 
     fun retrySync() {
-        val token = _state.value.accessToken
-        if (token.isBlank()) return
-        viewModelScope.launch { loadAllData(token) }
+        viewModelScope.launch { loadAllData(_state.value.accessToken) }
     }
 
     private fun startCountdownUpdater() {
@@ -312,9 +344,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val current = _state.value
                 if (!current.isSignedIn || current.signals.isEmpty()) continue
                 val computed = computeUpcoming(current.signals)
-                _state.update {
-                    it.copy(upcomingSignals = computed.first, currentSignal = computed.second)
-                }
+                _state.update { it.copy(upcomingSignals = computed.first, currentSignal = computed.second) }
             }
         }
     }
@@ -324,10 +354,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         syncJob = viewModelScope.launch {
             while (isActive) {
                 delay(30_000)
-                val token = _state.value.accessToken
-                if (token.isBlank() || !_state.value.isSignedIn) continue
+                if (!_state.value.isSignedIn) continue
                 try {
-                    val signals  = driveRepo.loadSignals(token)
+                    val signals  = withFreshToken { t -> driveRepo.loadSignals(t) }
                     val computed = computeUpcoming(signals)
                     _state.update {
                         it.copy(
@@ -376,8 +405,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     NotificationHelper.cancelNotification(context, signal.id)
                 return@forEach
             }
-            val countdown    = TimeCalculations.getCountdown(signal)
-            val inWindow     = countdown <= 45 && countdown >= -45
+            val countdown  = TimeCalculations.getCountdown(signal)
+            val inWindow   = countdown <= 45 && countdown >= -45
             val windowClosed = countdown < -45
             when {
                 inWindow -> {
@@ -393,11 +422,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── Signal generation ─────────────────────────────────────────────────
+
     fun generateSignal(input: String, onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             val parsed = TimeCalculations.parseInput(input)
             if (parsed == null) { onResult(false, "Invalid format! Use: 2.02x 21:31:22"); return@launch }
             _state.update { it.copy(isGenerating = true) }
+
             val addTime      = TimeCalculations.oddToTime(parsed.odd)
             val originalSecs = parsed.hour * 3600 + parsed.minute * 60 + parsed.second
             val addSecs      = addTime.hours * 3600 + addTime.minutes * 60 + addTime.seconds
@@ -405,78 +437,90 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val daysOffset   = totalSecs / 86400
             totalSecs       %= 86400
             val resultTime   = TimeObj(totalSecs / 3600, (totalSecs % 3600) / 60, totalSecs % 60)
-            val resultDate   = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, daysOffset) }.let {
+            val resultDate   = Calendar.getInstance().apply {
+                add(Calendar.DAY_OF_YEAR, daysOffset)
+            }.let {
                 java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
                     .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(it.time)
             }
-            if (_state.value.signals.any { it.status == SignalStatus.PENDING && it.resultTime == resultTime }) {
+
+            if (_state.value.signals.any {
+                    it.status == SignalStatus.PENDING && it.resultTime == resultTime
+                }
+            ) {
                 _state.update { it.copy(isGenerating = false) }
                 onResult(false, "This signal already exists!"); return@launch
             }
+
             val windowTimes = TimeCalculations.getBetWindowTimes(resultTime)
             val newSignal = Signal(
-                id           = driveRepo.newSignalId(), odd = parsed.odd,
+                id           = driveRepo.newSignalId(),
+                odd          = parsed.odd,
                 originalTime = TimeObj(parsed.hour, parsed.minute, parsed.second),
-                resultTime   = resultTime, resultDate = resultDate, daysOffset = daysOffset,
+                resultTime   = resultTime,
+                resultDate   = resultDate,
+                daysOffset   = daysOffset,
                 status       = SignalStatus.PENDING,
-                createdAt    = System.currentTimeMillis(), updatedAt = System.currentTimeMillis(),
+                createdAt    = System.currentTimeMillis(),
+                updatedAt    = System.currentTimeMillis(),
                 windowTimes  = windowTimes
             )
-            val token = _state.value.accessToken
-            if (driveRepo.addSignal(token, newSignal)) {
-                val newSignals = listOf(newSignal) + _state.value.signals
-                val computed   = computeUpcoming(newSignals)
-                _state.update {
-                    it.copy(
-                        signals = newSignals, isGenerating = false,
-                        upcomingSignals = computed.first, currentSignal = computed.second
-                    )
+
+            try {
+                val saved = withFreshToken { t -> driveRepo.addSignal(t, newSignal) }
+                if (saved) {
+                    val newSignals = listOf(newSignal) + _state.value.signals
+                    val computed   = computeUpcoming(newSignals)
+                    _state.update {
+                        it.copy(
+                            signals         = newSignals,
+                            isGenerating    = false,
+                            upcomingSignals = computed.first,
+                            currentSignal   = computed.second
+                        )
+                    }
+                    onResult(true, "Signal generated!")
+                } else {
+                    _state.update { it.copy(isGenerating = false) }
+                    onResult(false, "Failed to save signal. Check connection.")
                 }
-                onResult(true, "Signal generated!")
-            } else {
+            } catch (e: Exception) {
                 _state.update { it.copy(isGenerating = false) }
-                onResult(false, "Failed to save signal. Check connection.")
+                onResult(false, "Error: ${e.message}")
             }
         }
     }
 
     fun updateSignalStatus(signalId: String, status: SignalStatus) {
         viewModelScope.launch {
-            val token   = _state.value.accessToken
-            val updated = _state.value.signals.map {
+            val updated  = _state.value.signals.map {
                 if (it.id == signalId) it.copy(status = status, updatedAt = System.currentTimeMillis()) else it
             }
             val computed = computeUpcoming(updated)
-            _state.update {
-                it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second)
-            }
+            _state.update { it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second) }
             if (notifiedSignalIds.remove(signalId))
                 NotificationHelper.cancelNotification(getApplication(), signalId)
-            if (token.isNotBlank())
-                launch { runCatching { driveRepo.updateSignalStatus(token, signalId, status) } }
+            launch {
+                runCatching { withFreshToken { t -> driveRepo.updateSignalStatus(t, signalId, status) } }
+            }
         }
     }
 
     fun deleteSignal(signalId: String) {
         viewModelScope.launch {
-            val token    = _state.value.accessToken
             val updated  = _state.value.signals.filter { it.id != signalId }
             val computed = computeUpcoming(updated)
-            _state.update {
-                it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second)
-            }
+            _state.update { it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second) }
             if (notifiedSignalIds.remove(signalId))
                 NotificationHelper.cancelNotification(getApplication(), signalId)
-            if (token.isNotBlank())
-                launch { runCatching { driveRepo.deleteSignal(token, signalId) } }
+            launch { runCatching { withFreshToken { t -> driveRepo.deleteSignal(t, signalId) } } }
         }
     }
 
     fun saveSettings(settings: AppSettings) {
         viewModelScope.launch {
             _state.update { it.copy(settings = settings) }
-            val token = _state.value.accessToken
-            if (token.isNotBlank()) launch { runCatching { driveRepo.saveSettings(token, settings) } }
+            launch { runCatching { withFreshToken { t -> driveRepo.saveSettings(t, settings) } } }
         }
     }
 
@@ -484,8 +528,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _state.update { it.copy(user = profile) }
             launch { runCatching { authRepo.saveSession(profile) } }
-            val token = _state.value.accessToken
-            if (token.isNotBlank()) launch { runCatching { driveRepo.saveProfile(token, profile) } }
+            launch { runCatching { withFreshToken { t -> driveRepo.saveProfile(t, profile) } } }
         }
     }
 
@@ -507,14 +550,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     else sig
                 }
                 val computed = computeUpcoming(updated)
-                _state.update {
-                    it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second)
-                }
+                _state.update { it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second) }
                 toMark.forEach { sig ->
                     if (notifiedSignalIds.remove(sig.id))
                         NotificationHelper.cancelNotification(getApplication(), sig.id)
                 }
-                launch { runCatching { driveRepo.batchUpdateStatus(current.accessToken, updates) } }
+                launch { runCatching { withFreshToken { t -> driveRepo.batchUpdateStatus(t, updates) } } }
             }
         }
     }
