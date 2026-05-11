@@ -2,12 +2,10 @@ package com.aviator.predictor.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -15,677 +13,199 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.aviator.predictor.data.models.*
-import com.aviator.predictor.ui.components.*
 import com.aviator.predictor.ui.theme.*
-import com.aviator.predictor.utils.Formatters
-import com.aviator.predictor.utils.TimeCalculations
 
 @Composable
-fun ResultsScreen(
-    signals: List<Signal>,
-    onMarkWin: (String) -> Unit,
-    onMarkLoss: (String) -> Unit,
-    onReset: (String) -> Unit,
-    onDelete: (String) -> Unit
+fun GenerateScreen(
+    isGenerating: Boolean,
+    onGenerate: (String, (Boolean, String) -> Unit) -> Unit
 ) {
-
-    var filter by remember { mutableStateOf("all") }
-    var searchQuery by remember { mutableStateOf("") }
-    var deleteTarget by remember { mutableStateOf<String?>(null) }
-
-    val filters = listOf("all", "pending", "win", "loss", "missed")
-
-    val filterCounts = filters.associateWith { f ->
-        if (f == "all") signals.size
-        else signals.count { it.status.name.lowercase() == f }
-    }
-
-    val filtered = signals
-        .filter {
-            if (filter == "all") true
-            else it.status.name.lowercase() == filter
-        }
-        .filter {
-            if (searchQuery.isBlank()) {
-                true
-            } else {
-                val q = searchQuery.lowercase()
-
-                it.odd.toString().contains(q) ||
-                        it.status.name.lowercase().contains(q) ||
-                        Formatters.formatTime(it.resultTime)
-                            .lowercase()
-                            .contains(q)
-            }
-        }
-        .sortedByDescending { it.createdAt }
-
-    val wins = signals.count { it.status == SignalStatus.WIN }
-    val losses = signals.count { it.status == SignalStatus.LOSS }
-    val completed = wins + losses
-    val winRate = if (completed > 0) {
-        (wins * 100) / completed
-    } else {
-        0
-    }
+    var input       by remember { mutableStateOf("") }
+    var resultMsg   by remember { mutableStateOf<String?>(null) }
+    var resultOk    by remember { mutableStateOf(false) }
 
     Column(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-
-        // =========================
-        // STATS
-        // =========================
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        // ── Header ────────────────────────────────────────────────────────
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-
-            listOf(
-                Triple("Total", signals.size, BrandPurple),
-                Triple("Won", wins, GreenActive),
-                Triple("Lost", losses, RedClosed),
-                Triple("Win%", winRate, BlueInfo)
-            ).forEach { (label, value, color) ->
-
-                Card(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = color.copy(alpha = 0.10f)
-                    )
-                ) {
-
-                    Column(
-                        modifier = Modifier.padding(8.dp)
-                    ) {
-
-                        Text(
-                            text = label,
-                            color = color.copy(alpha = 0.8f),
-                            fontSize = 10.sp
-                        )
-
-                        Text(
-                            text = if (label == "Win%") {
-                                "$value%"
-                            } else {
-                                value.toString()
-                            },
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp
-                        )
-                    }
-                }
-            }
-        }
-
-        // =========================
-        // FILTER TABS FIXED
-        // =========================
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-
-            filters.forEach { f ->
-
-                val selected = filter == f
-
-                FilterChip(
-                    selected = selected,
-                    onClick = {
-                        filter = f
-                    },
-                    label = {
-
-                        Text(
-                            text = "${f.replaceFirstChar { it.uppercase() }} (${filterCounts[f]})",
-                            fontSize = 11.sp,
-                            maxLines = 1
-                        )
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = BrandPurple.copy(alpha = 0.25f),
-                        selectedLabelColor = BrandPurple,
-                        containerColor = Color(0xFF1E293B),
-                        labelColor = Color(0xFFCBD5E1)
-                    ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        enabled = true,
-                        selected = selected,
-                        borderColor = if (selected) {
-                            BrandPurple
-                        } else {
-                            Color(0xFF334155)
-                        }
-                    )
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // =========================
-        // SEARCH
-        // =========================
-
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = {
-                searchQuery = it
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-
-            placeholder = {
-                Text(
-                    "Search by odd, status, time...",
-                    color = Color(0xFF64748B),
-                    fontSize = 13.sp
-                )
-            },
-
-            leadingIcon = {
-                Icon(
-                    Icons.Filled.Search,
-                    contentDescription = null,
-                    tint = Color(0xFF94A3B8)
-                )
-            },
-
-            trailingIcon = {
-
-                if (searchQuery.isNotBlank()) {
-
-                    IconButton(
-                        onClick = {
-                            searchQuery = ""
-                        }
-                    ) {
-
-                        Icon(
-                            Icons.Filled.Clear,
-                            contentDescription = null,
-                            tint = Color(0xFF94A3B8)
-                        )
-                    }
-                }
-            },
-
-            singleLine = true,
-
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = BrandPurple,
-                unfocusedBorderColor = Color(0xFF334155),
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White,
-                cursorColor = BrandPurple
-            ),
-
-            shape = RoundedCornerShape(14.dp)
-        )
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // =========================
-        // EMPTY
-        // =========================
-
-        if (signals.isEmpty()) {
-
             Box(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Brush.linearGradient(listOf(BrandPurple, BrandPink))),
                 contentAlignment = Alignment.Center
             ) {
-
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-
-                    Icon(
-                        Icons.Filled.BarChart,
-                        contentDescription = null,
-                        tint = BrandPurple.copy(alpha = 0.3f),
-                        modifier = Modifier.size(64.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        "No results yet",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 16.sp
-                    )
-                }
-            }
-
-        } else {
-
-            LazyColumn(
-                contentPadding = PaddingValues(
-                    horizontal = 16.dp,
-                    vertical = 4.dp
-                ),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-
-                item {
-
-                    Text(
-                        text = "Showing ${filtered.size} of ${signals.size}",
-                        color = Color(0xFF64748B),
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
-                }
-
-                items(
-                    filtered,
-                    key = { it.id }
-                ) { signal ->
-
-                    ResultCard(
-                        signal = signal,
-                        onMarkWin = onMarkWin,
-                        onMarkLoss = onMarkLoss,
-                        onReset = onReset,
-                        onDelete = {
-                            deleteTarget = signal.id
-                        }
-                    )
-                }
-
-                item {
-                    Spacer(modifier = Modifier.height(80.dp))
-                }
-            }
-        }
-    }
-
-    // =========================
-    // DELETE DIALOG
-    // =========================
-
-    deleteTarget?.let { id ->
-
-        AlertDialog(
-            onDismissRequest = {
-                deleteTarget = null
-            },
-
-            containerColor = SlateSurface,
-
-            title = {
-                Text(
-                    "Delete Signal?",
-                    color = Color.White
+                Icon(
+                    Icons.Filled.PlayArrow, null,
+                    tint     = Color.White,
+                    modifier = Modifier.size(40.dp)
                 )
-            },
-
-            text = {
-                Text(
-                    "This cannot be undone.",
-                    color = Color(0xFF94A3B8)
-                )
-            },
-
-            confirmButton = {
-
-                TextButton(
-                    onClick = {
-                        onDelete(id)
-                        deleteTarget = null
-                    }
-                ) {
-
-                    Text(
-                        "Delete",
-                        color = RedClosed,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            },
-
-            dismissButton = {
-
-                TextButton(
-                    onClick = {
-                        deleteTarget = null
-                    }
-                ) {
-
-                    Text(
-                        "Cancel",
-                        color = Color(0xFF94A3B8)
-                    )
-                }
             }
-        )
-    }
-}
-
-@Composable
-private fun ResultCard(
-    signal: Signal,
-    onMarkWin: (String) -> Unit,
-    onMarkLoss: (String) -> Unit,
-    onReset: (String) -> Unit,
-    onDelete: () -> Unit
-) {
-
-    val countdown =
-        if (signal.status == SignalStatus.PENDING) {
-            TimeCalculations.getCountdown(signal)
-        } else {
-            null
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                "Generate Signal",
+                color      = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize   = 22.sp
+            )
+            Text(
+                "Enter odd and base time to calculate your signal",
+                color     = Color(0xFF94A3B8),
+                fontSize  = 13.sp,
+                textAlign = TextAlign.Center
+            )
         }
 
-    val isActive =
-        countdown != null &&
-                countdown > -45 &&
-                countdown <= 45
-
-    val borderColor = when {
-        isActive -> GreenActive
-        signal.status == SignalStatus.WIN ->
-            GreenActive.copy(alpha = 0.4f)
-
-        signal.status == SignalStatus.LOSS ->
-            RedClosed.copy(alpha = 0.4f)
-
-        signal.status == SignalStatus.MISSED ->
-            Color(0xFF475569)
-
-        else ->
-            BrandPurple.copy(alpha = 0.3f)
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(
-                1.dp,
-                borderColor,
-                RoundedCornerShape(16.dp)
-            ),
-
-        shape = RoundedCornerShape(16.dp),
-
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0x661E293B)
-        )
-    ) {
-
-        Column(
-            modifier = Modifier.padding(12.dp)
+        // ── Format hint card ──────────────────────────────────────────────
+        Card(
+            shape  = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = BrandPurple.copy(alpha = 0.1f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, BrandPurple.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
         ) {
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-
-                Column {
-
-                    Text(
-                        text = Formatters.formatTime(signal.resultTime),
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-
-                    Text(
-                        text = "${String.format("%.2f", signal.odd)}x",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 12.sp
-                    )
-                }
-
-                Column(
-                    horizontalAlignment = Alignment.End
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-
-                    SignalStatusChip(signal.status)
-
-                    if (isActive && countdown != null) {
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
+                    Icon(Icons.Filled.Info, null, tint = BrandPurple, modifier = Modifier.size(16.dp))
+                    Text("Input Format", color = BrandPurple, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                }
+                listOf(
+                    "2.02x 21:31:22",
+                    "150x 23:34:00",
+                    "2.02x21.31.22"
+                ).forEach { example ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(BrandPurple.copy(alpha = 0.5f))
+                        )
                         Text(
-                            text = "${kotlin.math.abs(countdown)}s",
-                            color = GreenActive,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
+                            example,
+                            color      = Color(0xFFCBD5E1),
+                            fontSize   = 12.sp,
+                            fontFamily = FontFamily.Monospace
                         )
                     }
                 }
             }
+        }
 
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Text(
-                text = Formatters.formatDateTime(signal.createdAt),
-                color = Color(0xFF64748B),
-                fontSize = 11.sp
+        // ── Input field ───────────────────────────────────────────────────
+        OutlinedTextField(
+            value         = input,
+            onValueChange = { input = it; resultMsg = null },
+            modifier      = Modifier.fillMaxWidth(),
+            label         = { Text("Odd × Time") },
+            placeholder   = { Text("e.g. 2.02x 21:31:22", color = Color(0xFF475569)) },
+            leadingIcon   = {
+                Icon(Icons.Filled.Edit, null, tint = BrandPurple)
+            },
+            trailingIcon  = {
+                if (input.isNotBlank()) {
+                    IconButton(onClick = { input = ""; resultMsg = null }) {
+                        Icon(Icons.Filled.Clear, null, tint = Color(0xFF94A3B8))
+                    }
+                }
+            },
+            singleLine = true,
+            shape      = RoundedCornerShape(16.dp),
+            colors     = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor   = BrandPurple,
+                unfocusedBorderColor = Color(0xFF334155),
+                focusedTextColor     = Color.White,
+                unfocusedTextColor   = Color.White,
+                focusedLabelColor    = BrandPurple,
+                unfocusedLabelColor  = Color(0xFF64748B),
+                cursorColor          = BrandPurple
             )
+        )
 
-            val wt = signal.windowTimes
-                ?: TimeCalculations.getBetWindowTimes(signal.resultTime)
+        // ── Generate button ───────────────────────────────────────────────
+        Button(
+            onClick  = {
+                if (input.isNotBlank() && !isGenerating) {
+                    resultMsg = null
+                    onGenerate(input) { ok, msg ->
+                        resultOk  = ok
+                        resultMsg = msg
+                        if (ok) input = ""
+                    }
+                }
+            },
+            enabled  = input.isNotBlank() && !isGenerating,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(54.dp),
+            shape  = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = BrandPurple,
+                disabledContainerColor = BrandPurple.copy(alpha = 0.4f)
+            )
+        ) {
+            if (isGenerating) {
+                CircularProgressIndicator(
+                    color     = Color.White,
+                    modifier  = Modifier.size(22.dp),
+                    strokeWidth = 2.dp
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text("Generating…", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            } else {
+                Icon(Icons.Filled.PlayArrow, null, modifier = Modifier.size(22.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Generate Signal", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+        }
 
-            Row(
+        // ── Result feedback ───────────────────────────────────────────────
+        resultMsg?.let { msg ->
+            val bgColor  = if (resultOk) GreenActive else RedClosed
+            Card(
+                shape  = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = bgColor.copy(alpha = 0.12f)),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .border(1.dp, bgColor.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
             ) {
-
-                WindowTimeCell(
-                    "OPEN",
-                    Formatters.formatTime(wt.openTime)
-                )
-
-                WindowTimeCell(
-                    "CLOSE",
-                    Formatters.formatTime(wt.closeTime)
-                )
-            }
-
-            if (isActive) {
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(
-                            GreenActive.copy(alpha = 0.15f)
-                        ),
-
-                    contentAlignment = Alignment.Center
+                Row(
+                    modifier              = Modifier.padding(14.dp),
+                    verticalAlignment     = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-
-                    Text(
-                        text = "ACTIVE NOW",
-                        color = GreenActive,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-
-                if (signal.status == SignalStatus.PENDING) {
-
-                    OutlinedButton(
-                        onClick = {
-                            onMarkWin(signal.id)
-                        },
-
-                        modifier = Modifier.weight(1f),
-
-                        shape = RoundedCornerShape(10.dp),
-
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = GreenActive
-                        )
-                    ) {
-
-                        Icon(
-                            Icons.Filled.CheckCircle,
-                            contentDescription = null,
-                            modifier = Modifier.size(15.dp)
-                        )
-
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        Text(
-                            "Win",
-                            fontSize = 12.sp
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            onMarkLoss(signal.id)
-                        },
-
-                        modifier = Modifier.weight(1f),
-
-                        shape = RoundedCornerShape(10.dp),
-
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = RedClosed
-                        )
-                    ) {
-
-                        Icon(
-                            Icons.Filled.Cancel,
-                            contentDescription = null,
-                            modifier = Modifier.size(15.dp)
-                        )
-
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        Text(
-                            "Loss",
-                            fontSize = 12.sp
-                        )
-                    }
-
-                } else {
-
-                    OutlinedButton(
-                        onClick = {
-                            onReset(signal.id)
-                        },
-
-                        modifier = Modifier.weight(1f),
-
-                        shape = RoundedCornerShape(10.dp),
-
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = BrandPurple
-                        )
-                    ) {
-
-                        Icon(
-                            Icons.Filled.Refresh,
-                            contentDescription = null,
-                            modifier = Modifier.size(15.dp)
-                        )
-
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        Text(
-                            "Reset",
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-
-                IconButton(
-                    onClick = onDelete,
-
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(
-                            RedClosed.copy(alpha = 0.1f)
-                        )
-                        .size(40.dp)
-                ) {
-
                     Icon(
-                        Icons.Filled.Delete,
-                        contentDescription = null,
-                        tint = RedClosed,
-                        modifier = Modifier.size(18.dp)
+                        if (resultOk) Icons.Filled.CheckCircle else Icons.Filled.ErrorOutline,
+                        null,
+                        tint     = bgColor,
+                        modifier = Modifier.size(20.dp)
                     )
+                    Text(msg, color = bgColor, fontWeight = FontWeight.Medium, fontSize = 14.sp)
                 }
             }
         }
-    }
-}
 
-@Composable
-private fun WindowTimeCell(
-    label: String,
-    time: String
-) {
-
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-
-        Text(
-            text = label,
-            color = Color(0xFF64748B),
-            fontSize = 9.sp,
-            fontWeight = FontWeight.SemiBold
-        )
-
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(Color(0x33334155))
-                .padding(
-                    horizontal = 8.dp,
-                    vertical = 3.dp
-                )
-        ) {
-
-            Text(
-                text = time,
-                color = Color.White,
-                fontSize = 12.sp,
-                fontFamily = FontFamily.Monospace
-            )
-        }
+        Spacer(modifier = Modifier.height(80.dp))
     }
 }

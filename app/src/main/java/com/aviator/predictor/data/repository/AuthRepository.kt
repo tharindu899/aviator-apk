@@ -120,7 +120,7 @@ class AuthRepository(private val context: Context) {
     /**
      * Returns a valid (possibly cached) access token.
      * GoogleAuthUtil.getToken() handles cache internally and refreshes
-     * automatically when needed. Call this for normal operations.
+     * automatically when needed.
      */
     private suspend fun getTokenForEmail(email: String): String? =
         withContext(Dispatchers.IO) {
@@ -132,16 +132,27 @@ class AuthRepository(private val context: Context) {
         }
 
     /**
-     * Force-refreshes the access token by clearing the cached copy first.
-     * Call this after receiving an HTTP 401 from the Drive API.
+     * Force-refreshes the access token by:
+     *  1. Fetching the currently-cached token (so we have the string to invalidate).
+     *  2. Calling clearToken(context, token) — the 2-arg overload — to evict it.
+     *  3. Calling getToken() again to obtain a fresh one from the network.
      *
-     * @return fresh token, or null if refresh fails (session revoked / no network)
+     * Called after receiving HTTP 401 from the Drive API.
      */
     suspend fun refreshAccessToken(email: String): String? =
         withContext(Dispatchers.IO) {
             try {
-                // Invalidate the cached token so getToken() must fetch a new one
-                GoogleAuthUtil.clearToken(context, email, DRIVE_SCOPE)
+                // Step 1: get whatever is cached (may be expired)
+                val cachedToken = try {
+                    GoogleAuthUtil.getToken(context, email, DRIVE_SCOPE)
+                } catch (_: Exception) { null }
+
+                // Step 2: invalidate it — clearToken takes (Context, tokenString)
+                if (!cachedToken.isNullOrBlank()) {
+                    try { GoogleAuthUtil.clearToken(context, cachedToken) } catch (_: Exception) {}
+                }
+
+                // Step 3: fetch a fresh token from the network
                 GoogleAuthUtil.getToken(context, email, DRIVE_SCOPE)
             } catch (e: Exception) {
                 null
