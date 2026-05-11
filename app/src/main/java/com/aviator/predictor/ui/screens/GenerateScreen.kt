@@ -1,13 +1,13 @@
 package com.aviator.predictor.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -16,360 +16,676 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.aviator.predictor.ui.components.GradientCard
-import com.aviator.predictor.ui.components.SectionHeader
+import com.aviator.predictor.data.models.*
+import com.aviator.predictor.ui.components.*
 import com.aviator.predictor.ui.theme.*
+import com.aviator.predictor.utils.Formatters
+import com.aviator.predictor.utils.TimeCalculations
 
 @Composable
-fun GenerateScreen(
-    isGenerating: Boolean,
-    onGenerate: (String, (Boolean, String) -> Unit) -> Unit
+fun ResultsScreen(
+    signals: List<Signal>,
+    onMarkWin: (String) -> Unit,
+    onMarkLoss: (String) -> Unit,
+    onReset: (String) -> Unit,
+    onDelete: (String) -> Unit
 ) {
 
-    var input by remember { mutableStateOf("") }
-    var statusMessage by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    var filter by remember { mutableStateOf("all") }
+    var searchQuery by remember { mutableStateOf("") }
+    var deleteTarget by remember { mutableStateOf<String?>(null) }
 
-    val clipboard = LocalClipboardManager.current
+    val filters = listOf("all", "pending", "win", "loss", "missed")
 
-    val examples = listOf(
-        "12.32x 09:18:18" to "Standard",
-        "150x 23:34:00" to "High multiplier",
-        "1437.20x 06:31:56" to "Very high"
-    )
+    val filterCounts = filters.associateWith { f ->
+        if (f == "all") signals.size
+        else signals.count { it.status.name.lowercase() == f }
+    }
+
+    val filtered = signals
+        .filter {
+            if (filter == "all") true
+            else it.status.name.lowercase() == filter
+        }
+        .filter {
+            if (searchQuery.isBlank()) {
+                true
+            } else {
+                val q = searchQuery.lowercase()
+
+                it.odd.toString().contains(q) ||
+                        it.status.name.lowercase().contains(q) ||
+                        Formatters.formatTime(it.resultTime)
+                            .lowercase()
+                            .contains(q)
+            }
+        }
+        .sortedByDescending { it.createdAt }
+
+    val wins = signals.count { it.status == SignalStatus.WIN }
+    val losses = signals.count { it.status == SignalStatus.LOSS }
+    val completed = wins + losses
+    val winRate = if (completed > 0) {
+        (wins * 100) / completed
+    } else {
+        0
+    }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = Modifier.fillMaxSize()
     ) {
 
-        SectionHeader("Generate Signal")
+        // =========================
+        // STATS
+        // =========================
 
-        // ─────────────────────────────
-        // Main Card
-        // ─────────────────────────────
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
 
-        GradientCard {
+            listOf(
+                Triple("Total", signals.size, BrandPurple),
+                Triple("Won", wins, GreenActive),
+                Triple("Lost", losses, RedClosed),
+                Triple("Win%", winRate, BlueInfo)
+            ).forEach { (label, value, color) ->
 
-            Text(
-                text = "Enter Odd & Time",
-                color = BrandPurple,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = {
-                        input = it
-                        statusMessage = null
-                    },
-
+                Card(
                     modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = color.copy(alpha = 0.10f)
+                    )
+                ) {
 
-                    placeholder = {
+                    Column(
+                        modifier = Modifier.padding(8.dp)
+                    ) {
+
                         Text(
-                            "12.32x\n09:18:18",
-                            color = Color(0xFF64748B)
+                            text = label,
+                            color = color.copy(alpha = 0.8f),
+                            fontSize = 10.sp
                         )
-                    },
 
-                    singleLine = false,
-                    minLines = 1,
-                    maxLines = 2,
-
-                    keyboardOptions = KeyboardOptions(
-                        imeAction = ImeAction.Done
-                    ),
-
-                    keyboardActions = KeyboardActions(
-                        onDone = {
-                            if (input.isNotBlank() && !isGenerating) {
-
-                                val normalized = normalizeSignalInput(input)
-
-                                onGenerate(normalized) { ok, msg ->
-                                    statusMessage = ok to msg
-
-                                    if (ok) {
-                                        input = ""
-                                    }
-                                }
-                            }
-                        }
-                    ),
-
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = BrandPurple,
-                        unfocusedBorderColor = Color(0xFF475569),
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        cursorColor = BrandPurple
-                    ),
-
-                    shape = RoundedCornerShape(12.dp)
-                )
-
-                // ─────────────────────────────
-                // Paste Button
-                // ─────────────────────────────
-
-                IconButton(
-                    onClick = {
-
-                        val pasted =
-                            clipboard.getText()?.text?.toString() ?: ""
-
-                        if (pasted.isNotBlank()) {
-
-                            input = normalizeSignalInput(pasted)
-
-                            statusMessage = null
-                        }
-                    },
-
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(
-                            BrandPurple.copy(alpha = 0.2f)
+                        Text(
+                            text = if (label == "Win%") {
+                                "$value%"
+                            } else {
+                                value.toString()
+                            },
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp
                         )
-                ) {
-
-                    Icon(
-                        imageVector = Icons.Default.ContentPaste,
-                        contentDescription = "Paste",
-                        tint = BrandPurple
-                    )
-                }
-            }
-
-            // ─────────────────────────────
-            // Status Message
-            // ─────────────────────────────
-
-            statusMessage?.let { (ok, msg) ->
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(
-                            if (ok)
-                                GreenActive.copy(alpha = 0.15f)
-                            else
-                                RedClosed.copy(alpha = 0.15f)
-                        )
-                        .padding(10.dp),
-
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-
-                    Icon(
-                        imageVector =
-                            if (ok)
-                                Icons.Default.CheckCircle
-                            else
-                                Icons.Default.Error,
-
-                        contentDescription = null,
-
-                        tint =
-                            if (ok)
-                                GreenActive
-                            else
-                                RedClosed,
-
-                        modifier = Modifier.size(18.dp)
-                    )
-
-                    Text(
-                        text = msg,
-                        color =
-                            if (ok)
-                                GreenActive
-                            else
-                                RedClosed,
-
-                        fontSize = 13.sp
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // ─────────────────────────────
-            // Generate Button
-            // ─────────────────────────────
-
-            Button(
-                onClick = {
-
-                    val normalized = normalizeSignalInput(input)
-
-                    onGenerate(normalized) { ok, msg ->
-
-                        statusMessage = ok to msg
-
-                        if (ok) {
-                            input = ""
-                        }
                     }
-                },
-
-                enabled = !isGenerating && input.isNotBlank(),
-
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-
-                shape = RoundedCornerShape(14.dp),
-
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = BrandPurple,
-                    disabledContainerColor =
-                        BrandPurple.copy(alpha = 0.4f)
-                )
-            ) {
-
-                if (isGenerating) {
-
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(22.dp),
-                        color = Color.White,
-                        strokeWidth = 2.dp
-                    )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    Text("Calculating...")
-
-                } else {
-
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp)
-                    )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    Text(
-                        text = "Calculate Signal",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
                 }
             }
         }
 
-        // ─────────────────────────────
-        // Examples
-        // ─────────────────────────────
+        // =========================
+        // FILTER TABS FIXED
+        // =========================
 
-        GradientCard {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
 
-            Text(
-                text = "Examples (tap to use)",
-                color = BrandPurple,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold
-            )
+            filters.forEach { f ->
 
-            Spacer(modifier = Modifier.height(8.dp))
+                val selected = filter == f
 
-            examples.forEach { (format, desc) ->
+                FilterChip(
+                    selected = selected,
+                    onClick = {
+                        filter = f
+                    },
+                    label = {
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color(0x33475569))
-                        .clickable {
-                            input = format
-                            statusMessage = null
+                        Text(
+                            text = "${f.replaceFirstChar { it.uppercase() }} (${filterCounts[f]})",
+                            fontSize = 11.sp,
+                            maxLines = 1
+                        )
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = BrandPurple.copy(alpha = 0.25f),
+                        selectedLabelColor = BrandPurple,
+                        containerColor = Color(0xFF1E293B),
+                        labelColor = Color(0xFFCBD5E1)
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = selected,
+                        borderColor = if (selected) {
+                            BrandPurple
+                        } else {
+                            Color(0xFF334155)
                         }
-                        .padding(10.dp),
+                    )
+                )
+            }
+        }
 
-                    horizontalArrangement =
-                        Arrangement.SpaceBetween,
+        Spacer(modifier = Modifier.height(8.dp))
 
-                    verticalAlignment =
-                        Alignment.CenterVertically
+        // =========================
+        // SEARCH
+        // =========================
+
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = {
+                searchQuery = it
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+
+            placeholder = {
+                Text(
+                    "Search by odd, status, time...",
+                    color = Color(0xFF64748B),
+                    fontSize = 13.sp
+                )
+            },
+
+            leadingIcon = {
+                Icon(
+                    Icons.Filled.Search,
+                    contentDescription = null,
+                    tint = Color(0xFF94A3B8)
+                )
+            },
+
+            trailingIcon = {
+
+                if (searchQuery.isNotBlank()) {
+
+                    IconButton(
+                        onClick = {
+                            searchQuery = ""
+                        }
+                    ) {
+
+                        Icon(
+                            Icons.Filled.Clear,
+                            contentDescription = null,
+                            tint = Color(0xFF94A3B8)
+                        )
+                    }
+                }
+            },
+
+            singleLine = true,
+
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = BrandPurple,
+                unfocusedBorderColor = Color(0xFF334155),
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White,
+                cursorColor = BrandPurple
+            ),
+
+            shape = RoundedCornerShape(14.dp)
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // =========================
+        // EMPTY
+        // =========================
+
+        if (signals.isEmpty()) {
+
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+
+                    Icon(
+                        Icons.Filled.BarChart,
+                        contentDescription = null,
+                        tint = BrandPurple.copy(alpha = 0.3f),
+                        modifier = Modifier.size(64.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        "No results yet",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 16.sp
+                    )
+                }
+            }
+
+        } else {
+
+            LazyColumn(
+                contentPadding = PaddingValues(
+                    horizontal = 16.dp,
+                    vertical = 4.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+
+                item {
+
+                    Text(
+                        text = "Showing ${filtered.size} of ${signals.size}",
+                        color = Color(0xFF64748B),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+
+                items(
+                    filtered,
+                    key = { it.id }
+                ) { signal ->
+
+                    ResultCard(
+                        signal = signal,
+                        onMarkWin = onMarkWin,
+                        onMarkLoss = onMarkLoss,
+                        onReset = onReset,
+                        onDelete = {
+                            deleteTarget = signal.id
+                        }
+                    )
+                }
+
+                item {
+                    Spacer(modifier = Modifier.height(80.dp))
+                }
+            }
+        }
+    }
+
+    // =========================
+    // DELETE DIALOG
+    // =========================
+
+    deleteTarget?.let { id ->
+
+        AlertDialog(
+            onDismissRequest = {
+                deleteTarget = null
+            },
+
+            containerColor = SlateSurface,
+
+            title = {
+                Text(
+                    "Delete Signal?",
+                    color = Color.White
+                )
+            },
+
+            text = {
+                Text(
+                    "This cannot be undone.",
+                    color = Color(0xFF94A3B8)
+                )
+            },
+
+            confirmButton = {
+
+                TextButton(
+                    onClick = {
+                        onDelete(id)
+                        deleteTarget = null
+                    }
                 ) {
 
                     Text(
-                        text = format,
+                        "Delete",
+                        color = RedClosed,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+
+            dismissButton = {
+
+                TextButton(
+                    onClick = {
+                        deleteTarget = null
+                    }
+                ) {
+
+                    Text(
+                        "Cancel",
+                        color = Color(0xFF94A3B8)
+                    )
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ResultCard(
+    signal: Signal,
+    onMarkWin: (String) -> Unit,
+    onMarkLoss: (String) -> Unit,
+    onReset: (String) -> Unit,
+    onDelete: () -> Unit
+) {
+
+    val countdown =
+        if (signal.status == SignalStatus.PENDING) {
+            TimeCalculations.getCountdown(signal)
+        } else {
+            null
+        }
+
+    val isActive =
+        countdown != null &&
+                countdown > -45 &&
+                countdown <= 45
+
+    val borderColor = when {
+        isActive -> GreenActive
+        signal.status == SignalStatus.WIN ->
+            GreenActive.copy(alpha = 0.4f)
+
+        signal.status == SignalStatus.LOSS ->
+            RedClosed.copy(alpha = 0.4f)
+
+        signal.status == SignalStatus.MISSED ->
+            Color(0xFF475569)
+
+        else ->
+            BrandPurple.copy(alpha = 0.3f)
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                1.dp,
+                borderColor,
+                RoundedCornerShape(16.dp)
+            ),
+
+        shape = RoundedCornerShape(16.dp),
+
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0x661E293B)
+        )
+    ) {
+
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+
+                Column {
+
+                    Text(
+                        text = Formatters.formatTime(signal.resultTime),
                         color = Color.White,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                        fontFamily = FontFamily.Monospace
                     )
 
                     Text(
-                        text = desc,
+                        text = "${String.format("%.2f", signal.odd)}x",
                         color = Color(0xFF94A3B8),
                         fontSize = 12.sp
                     )
                 }
 
+                Column(
+                    horizontalAlignment = Alignment.End
+                ) {
+
+                    SignalStatusChip(signal.status)
+
+                    if (isActive && countdown != null) {
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Text(
+                            text = "${kotlin.math.abs(countdown)}s",
+                            color = GreenActive,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = Formatters.formatDateTime(signal.createdAt),
+                color = Color(0xFF64748B),
+                fontSize = 11.sp
+            )
+
+            val wt = signal.windowTimes
+                ?: TimeCalculations.getBetWindowTimes(signal.resultTime)
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+
+                WindowTimeCell(
+                    "OPEN",
+                    Formatters.formatTime(wt.openTime)
+                )
+
+                WindowTimeCell(
+                    "CLOSE",
+                    Formatters.formatTime(wt.closeTime)
+                )
+            }
+
+            if (isActive) {
+
                 Spacer(modifier = Modifier.height(6.dp))
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            GreenActive.copy(alpha = 0.15f)
+                        ),
+
+                    contentAlignment = Alignment.Center
+                ) {
+
+                    Text(
+                        text = "ACTIVE NOW",
+                        color = GreenActive,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+
+                if (signal.status == SignalStatus.PENDING) {
+
+                    OutlinedButton(
+                        onClick = {
+                            onMarkWin(signal.id)
+                        },
+
+                        modifier = Modifier.weight(1f),
+
+                        shape = RoundedCornerShape(10.dp),
+
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = GreenActive
+                        )
+                    ) {
+
+                        Icon(
+                            Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp)
+                        )
+
+                        Spacer(modifier = Modifier.width(4.dp))
+
+                        Text(
+                            "Win",
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            onMarkLoss(signal.id)
+                        },
+
+                        modifier = Modifier.weight(1f),
+
+                        shape = RoundedCornerShape(10.dp),
+
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = RedClosed
+                        )
+                    ) {
+
+                        Icon(
+                            Icons.Filled.Cancel,
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp)
+                        )
+
+                        Spacer(modifier = Modifier.width(4.dp))
+
+                        Text(
+                            "Loss",
+                            fontSize = 12.sp
+                        )
+                    }
+
+                } else {
+
+                    OutlinedButton(
+                        onClick = {
+                            onReset(signal.id)
+                        },
+
+                        modifier = Modifier.weight(1f),
+
+                        shape = RoundedCornerShape(10.dp),
+
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = BrandPurple
+                        )
+                    ) {
+
+                        Icon(
+                            Icons.Filled.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp)
+                        )
+
+                        Spacer(modifier = Modifier.width(4.dp))
+
+                        Text(
+                            "Reset",
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = onDelete,
+
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            RedClosed.copy(alpha = 0.1f)
+                        )
+                        .size(40.dp)
+                ) {
+
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = null,
+                        tint = RedClosed,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
-
-        Spacer(modifier = Modifier.height(80.dp))
     }
 }
 
-// ─────────────────────────────────────────────
-// Normalize Input
-// ─────────────────────────────────────────────
+@Composable
+private fun WindowTimeCell(
+    label: String,
+    time: String
+) {
 
-private fun normalizeSignalInput(raw: String): String {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
 
-    // Remove new lines
-    var s = raw
-        .replace("\n", " ")
-        .replace("\r", " ")
-        .trim()
+        Text(
+            text = label,
+            color = Color(0xFF64748B),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.SemiBold
+        )
 
-    // Convert 09.18.18 -> 09:18:18
-    s = s.replace(
-        Regex("""(\d{1,2})\.(\d{2})\.(\d{2})"""),
-        "$1:$2:$3"
-    )
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color(0x33334155))
+                .padding(
+                    horizontal = 8.dp,
+                    vertical = 3.dp
+                )
+        ) {
 
-    // Fix:
-    // 12.32x09:18:18
-    // 12.32x 09:18:18
-    // 12.32X09.18.18
-    // 12.32x\n09:18:18
-
-    s = s.replace(
-        Regex(
-            """([0-9.]+)[xX]\s*([0-9]{1,2}:[0-9]{2}:[0-9]{2})"""
-        ),
-        "$1x $2"
-    )
-
-    return s
+            Text(
+                text = time,
+                color = Color.White,
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+    }
 }
