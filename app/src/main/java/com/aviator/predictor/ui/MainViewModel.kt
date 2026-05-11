@@ -359,15 +359,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     // Merge: keep the version with the later updatedAt timestamp.
                     // This prevents a just-saved WIN/LOSS from being overwritten
                     // by a stale value loaded from Drive before the save arrived.
+                    val localById = localSignals.associateBy { it.id }
                     val merged = driveSignals.map { ds ->
-                        val local = localSignals.find { it.id == ds.id }
+                        val local = localById[ds.id]
                         if (local != null && local.updatedAt > ds.updatedAt) local else ds
                     }
                     // Also keep any local signals not yet present on Drive
-                    val driveIds   = driveSignals.map { it.id }.toSet()
+                    val driveIds   = driveSignals.mapTo(mutableSetOf()) { it.id }
                     val localOnly  = localSignals.filter { it.id !in driveIds }
 
-                    val finalList  = merged + localOnly
+                    val finalList  = (merged + localOnly).sortedByDescending { it.createdAt }
                     val computed   = computeUpcoming(finalList)
                     _state.update {
                         it.copy(
