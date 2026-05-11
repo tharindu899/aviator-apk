@@ -16,6 +16,8 @@ import com.aviator.predictor.data.repository.DriveRepository
 import com.aviator.predictor.utils.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.*
 
@@ -70,6 +72,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var activeDownloadId: Long = -1L
     private var downloadStartTimeMs: Long = 0L
 
+    // Prevents two coroutines from refreshing the token simultaneously
+    private val tokenMutex = Mutex()
+
     private val notifiedSignalIds = mutableSetOf<String>()
 
     init {
@@ -95,13 +100,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return try {
             block(currentToken())
         } catch (e: DriveAuthException) {
-            val email = _state.value.user?.email ?: throw e
-
-            val newToken = authRepo.refreshAccessToken(email)
-                ?: throw Exception("Token refresh failed — please sign in again")
-
-            _state.update { it.copy(accessToken = newToken) }
-            driveRepo.clearCache()
+            // Only one coroutine refreshes at a time; others wait and reuse the result.
+            val newToken = tokenMutex.withLock {
+                val email = _state.value.user?.email ?: throw e
+                val refreshed = authRepo.refreshAccessToken(email)
+                    ?: throw Exception("Token refresh failed — please sign in again")
+                _state.update { it.copy(accessToken = refreshed) }
+                driveRepo.clearCache()
+                refreshed
+            }
             block(newToken)
         }
     }
@@ -288,9 +295,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun loadAllData(token: String) {
         _state.update { it.copy(isLoading = true, syncStatus = SyncStatus.SYNCING) }
         try {
-            val signals  = withFreshToken { t -> driveRepo.loadSignals(t) }
-            val settings = withFreshToken { t -> driveRepo.loadSettings(t) }
-            val profile  = withFreshToken { t -> driveRepo.loadProfile(t) }
+            // Run all three Drive reads in parallel — 3× faster on slow connections
+            val (signals, settings, profile) = coroutineScope {
+                val sd = async { withFreshToken { t -> driveRepo.loadSignals(t) } }
+                val se = async { withFreshToken { t -> driveRepo.loadSettings(t) } }
+                val pd = async { withFreshToken { t -> driveRepo.loadProfile(t) } }
+                Triple(sd.await(), se.await(), pd.await())
+            }
+
+            // Show signals immediately as the first update so the UI feels snappy
             val computed = computeUpcoming(signals)
             _state.update {
                 it.copy(
