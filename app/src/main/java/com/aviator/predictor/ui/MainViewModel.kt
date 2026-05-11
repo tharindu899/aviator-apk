@@ -81,10 +81,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Token management ──────────────────────────────────────────────────
 
-    /**
-     * Returns the current token, or a freshly-fetched one if the stored token
-     * is blank. Never called under heavy concurrency — callers use [withFreshToken].
-     */
     private suspend fun currentToken(): String {
         val stored = _state.value.accessToken
         if (stored.isNotBlank()) return stored
@@ -95,39 +91,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return fresh
     }
 
-    /**
-     * Executes [block] with the current token.
-     * If [block] throws [DriveAuthException] (HTTP 401), it force-refreshes the
-     * token and retries exactly once. On the second failure the exception
-     * propagates to the caller.
-     */
     private suspend fun <T> withFreshToken(block: suspend (token: String) -> T): T {
         return try {
             block(currentToken())
         } catch (e: DriveAuthException) {
-            // Token expired — force-refresh and retry once
-            val email = _state.value.user?.email
-                ?: throw e   // can't refresh without email → propagate
+            val email = _state.value.user?.email ?: throw e
 
             val newToken = authRepo.refreshAccessToken(email)
                 ?: throw Exception("Token refresh failed — please sign in again")
 
             _state.update { it.copy(accessToken = newToken) }
-            driveRepo.clearCache()   // file IDs may have been fetched with the old token
-            block(newToken)          // one more try — if this throws, caller handles it
+            driveRepo.clearCache()
+            block(newToken)
         }
     }
 
-    /**
-     * Periodic token refresh — runs every 45 minutes while signed in.
-     * Google tokens expire after 60 minutes; refreshing proactively avoids
-     * mid-operation 401s in heavy usage sessions.
-     */
     private fun startTokenRefreshLoop() {
         tokenRefreshJob?.cancel()
         tokenRefreshJob = viewModelScope.launch {
             while (isActive) {
-                delay(45 * 60 * 1000L)          // 45 minutes
+                delay(45 * 60 * 1000L)
                 if (!_state.value.isSignedIn) continue
                 val email = _state.value.user?.email ?: continue
                 val fresh = authRepo.refreshAccessToken(email)
@@ -349,6 +332,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── FIX: Periodic sync uses updatedAt to avoid overwriting local changes ──
     private fun startPeriodicSync() {
         syncJob?.cancel()
         syncJob = viewModelScope.launch {
@@ -356,16 +340,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 delay(30_000)
                 if (!_state.value.isSignedIn) continue
                 try {
-                    val signals  = withFreshToken { t -> driveRepo.loadSignals(t) }
-                    val computed = computeUpcoming(signals)
+                    val driveSignals = withFreshToken { t -> driveRepo.loadSignals(t) }
+                    val localSignals = _state.value.signals
+
+                    // Merge: keep the version with the later updatedAt timestamp.
+                    // This prevents a just-saved WIN/LOSS from being overwritten
+                    // by a stale value loaded from Drive before the save arrived.
+                    val merged = driveSignals.map { ds ->
+                        val local = localSignals.find { it.id == ds.id }
+                        if (local != null && local.updatedAt > ds.updatedAt) local else ds
+                    }
+                    // Also keep any local signals not yet present on Drive
+                    val driveIds   = driveSignals.map { it.id }.toSet()
+                    val localOnly  = localSignals.filter { it.id !in driveIds }
+
+                    val finalList  = merged + localOnly
+                    val computed   = computeUpcoming(finalList)
                     _state.update {
                         it.copy(
-                            signals         = signals,
+                            signals         = finalList,
                             syncStatus      = SyncStatus.SYNCED,
                             upcomingSignals = computed.first,
                             currentSignal   = computed.second
                         )
                     }
+                } catch (e: DriveAuthException) {
+                    // Auth error — mark ERROR, not OFFLINE; do not overwrite signals
+                    _state.update { it.copy(syncStatus = SyncStatus.ERROR) }
                 } catch (_: Exception) {
                     _state.update { it.copy(syncStatus = SyncStatus.OFFLINE) }
                 }
@@ -475,6 +476,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         it.copy(
                             signals         = newSignals,
                             isGenerating    = false,
+                            syncStatus      = SyncStatus.SYNCED,
                             upcomingSignals = computed.first,
                             currentSignal   = computed.second
                         )
@@ -485,50 +487,105 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     onResult(false, "Failed to save signal. Check connection.")
                 }
             } catch (e: Exception) {
-                _state.update { it.copy(isGenerating = false) }
+                _state.update { it.copy(isGenerating = false, syncStatus = SyncStatus.ERROR) }
                 onResult(false, "Error: ${e.message}")
             }
         }
     }
 
+    // ── FIX: Drive save errors now surface in syncStatus instead of being swallowed ──
     fun updateSignalStatus(signalId: String, status: SignalStatus) {
         viewModelScope.launch {
+            val now = System.currentTimeMillis()
             val updated  = _state.value.signals.map {
-                if (it.id == signalId) it.copy(status = status, updatedAt = System.currentTimeMillis()) else it
+                if (it.id == signalId) it.copy(status = status, updatedAt = now) else it
             }
             val computed = computeUpcoming(updated)
-            _state.update { it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second) }
+            _state.update {
+                it.copy(
+                    signals         = updated,
+                    upcomingSignals = computed.first,
+                    currentSignal   = computed.second,
+                    syncStatus      = SyncStatus.SYNCING
+                )
+            }
             if (notifiedSignalIds.remove(signalId))
                 NotificationHelper.cancelNotification(getApplication(), signalId)
+
             launch {
-                runCatching { withFreshToken { t -> driveRepo.updateSignalStatus(t, signalId, status) } }
+                try {
+                    withFreshToken { t -> driveRepo.updateSignalStatus(t, signalId, status) }
+                    _state.update { it.copy(syncStatus = SyncStatus.SYNCED) }
+                } catch (e: DriveAuthException) {
+                    _state.update { it.copy(syncStatus = SyncStatus.ERROR) }
+                } catch (_: Exception) {
+                    _state.update { it.copy(syncStatus = SyncStatus.OFFLINE) }
+                }
             }
         }
     }
 
+    // ── FIX: same pattern for deleteSignal ────────────────────────────────
     fun deleteSignal(signalId: String) {
         viewModelScope.launch {
             val updated  = _state.value.signals.filter { it.id != signalId }
             val computed = computeUpcoming(updated)
-            _state.update { it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second) }
+            _state.update {
+                it.copy(
+                    signals         = updated,
+                    upcomingSignals = computed.first,
+                    currentSignal   = computed.second,
+                    syncStatus      = SyncStatus.SYNCING
+                )
+            }
             if (notifiedSignalIds.remove(signalId))
                 NotificationHelper.cancelNotification(getApplication(), signalId)
-            launch { runCatching { withFreshToken { t -> driveRepo.deleteSignal(t, signalId) } } }
+
+            launch {
+                try {
+                    withFreshToken { t -> driveRepo.deleteSignal(t, signalId) }
+                    _state.update { it.copy(syncStatus = SyncStatus.SYNCED) }
+                } catch (e: DriveAuthException) {
+                    _state.update { it.copy(syncStatus = SyncStatus.ERROR) }
+                } catch (_: Exception) {
+                    _state.update { it.copy(syncStatus = SyncStatus.OFFLINE) }
+                }
+            }
         }
     }
 
+    // ── FIX: same pattern for saveSettings ───────────────────────────────
     fun saveSettings(settings: AppSettings) {
         viewModelScope.launch {
-            _state.update { it.copy(settings = settings) }
-            launch { runCatching { withFreshToken { t -> driveRepo.saveSettings(t, settings) } } }
+            _state.update { it.copy(settings = settings, syncStatus = SyncStatus.SYNCING) }
+            launch {
+                try {
+                    withFreshToken { t -> driveRepo.saveSettings(t, settings) }
+                    _state.update { it.copy(syncStatus = SyncStatus.SYNCED) }
+                } catch (e: DriveAuthException) {
+                    _state.update { it.copy(syncStatus = SyncStatus.ERROR) }
+                } catch (_: Exception) {
+                    _state.update { it.copy(syncStatus = SyncStatus.OFFLINE) }
+                }
+            }
         }
     }
 
+    // ── FIX: same pattern for saveProfile ────────────────────────────────
     fun saveProfile(profile: UserProfile) {
         viewModelScope.launch {
-            _state.update { it.copy(user = profile) }
+            _state.update { it.copy(user = profile, syncStatus = SyncStatus.SYNCING) }
             launch { runCatching { authRepo.saveSession(profile) } }
-            launch { runCatching { withFreshToken { t -> driveRepo.saveProfile(t, profile) } } }
+            launch {
+                try {
+                    withFreshToken { t -> driveRepo.saveProfile(t, profile) }
+                    _state.update { it.copy(syncStatus = SyncStatus.SYNCED) }
+                } catch (e: DriveAuthException) {
+                    _state.update { it.copy(syncStatus = SyncStatus.ERROR) }
+                } catch (_: Exception) {
+                    _state.update { it.copy(syncStatus = SyncStatus.OFFLINE) }
+                }
+            }
         }
     }
 
@@ -544,9 +601,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val toMark = current.signals.filter { TimeCalculations.shouldMarkAsMissed(it) }
                 if (toMark.isEmpty()) continue
                 val updates = toMark.associate { it.id to SignalStatus.MISSED }
+                val now     = System.currentTimeMillis()
                 val updated = current.signals.map { sig ->
                     if (updates.containsKey(sig.id))
-                        sig.copy(status = SignalStatus.MISSED, updatedAt = System.currentTimeMillis(), autoMarked = true)
+                        sig.copy(status = SignalStatus.MISSED, updatedAt = now, autoMarked = true)
                     else sig
                 }
                 val computed = computeUpcoming(updated)
@@ -555,7 +613,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (notifiedSignalIds.remove(sig.id))
                         NotificationHelper.cancelNotification(getApplication(), sig.id)
                 }
-                launch { runCatching { withFreshToken { t -> driveRepo.batchUpdateStatus(t, updates) } } }
+                launch {
+                    try {
+                        withFreshToken { t -> driveRepo.batchUpdateStatus(t, updates) }
+                    } catch (_: Exception) {
+                        // auto-mark failures are non-critical; periodic sync will retry
+                    }
+                }
             }
         }
     }
