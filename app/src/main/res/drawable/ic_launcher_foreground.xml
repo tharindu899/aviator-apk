@@ -1,21 +1,357 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    ic_launcher_foreground.xml
+    Place at: app/src/main/res/drawable/ic_launcher_foreground.xml
+
+    Adaptive icon foreground — drawn in the 108dp safe zone.
+    The inner 72dp (x=18..90, y=18..90) is guaranteed visible on all
+    launcher shapes (circle, squircle, rounded-rect, etc.).
+    All visual content stays within x=14..94, y=14..94.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
+    <!-- ════════════════════════════════════════════════════════════
+         BACKGROUND GLOW LAYER  (subtle purple radial feel)
+         ════════════════════════════════════════════════════════════ -->
+
+    <!-- Soft centre bloom so the plane reads against the dark bg -->
     <path
-        android:fillColor="#A855F7"
-        android:pathData="M54,18 L63,18 L63,68 L54,68 Z"/>
+        android:fillColor="#33A855F7"
+        android:pathData="M54,54
+            m-32,0
+            a32,22 0 1,0 64,0
+            a32,22 0 1,0 -64,0 Z"/>
+
+    <!-- ════════════════════════════════════════════════════════════
+         SIGNAL / RADAR ARCS  (behind the plane)
+         ════════════════════════════════════════════════════════════ -->
+
+    <!-- Arc 1 — tight, bright purple -->
     <path
-        android:fillColor="#A855F7"
-        android:pathData="M20,36 L54,32 L54,54 L20,50 Z"/>
+        android:fillColor="#00000000"
+        android:strokeColor="#C084FC"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:pathData="M66,70 Q78,57 88,42"/>
+
+    <!-- Arc 2 — medium, softer -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#A855F7"
+        android:strokeWidth="0.85"
+        android:strokeLineCap="round"
+        android:pathData="M60,76 Q78,55 92,34"/>
+
+    <!-- Arc 3 — wide, very faint -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#9333EA"
+        android:strokeWidth="0.6"
+        android:strokeLineCap="round"
+        android:pathData="M54,82 Q78,53 94,26"/>
+
+    <!-- Signal origin dot -->
     <path
         android:fillColor="#EC4899"
-        android:pathData="M63,32 L88,36 L88,50 L63,54 Z"/>
+        android:pathData="M63,72
+            m-4,0
+            a4,4 0 1,0 8,0
+            a4,4 0 1,0 -8,0 Z"/>
+
+    <!-- Outer pulse ring around origin dot -->
+    <path
+        android:fillColor="#33EC4899"
+        android:pathData="M63,72
+            m-7,0
+            a7,7 0 1,0 14,0
+            a7,7 0 1,0 -14,0 Z"/>
+
+    <!-- ════════════════════════════════════════════════════════════
+         SPEED LINES  (left of plane, gives motion)
+         ════════════════════════════════════════════════════════════ -->
+
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#A855F7"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:pathData="M14,50 L26,50"/>
+
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#A855F7"
+        android:strokeWidth="0.85"
+        android:strokeLineCap="round"
+        android:pathData="M16,54 L26,54"/>
+
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#C084FC"
+        android:strokeWidth="0.65"
+        android:strokeLineCap="round"
+        android:pathData="M18,58 L27,58"/>
+
+    <!-- ════════════════════════════════════════════════════════════
+         AIRCRAFT — rotated ~-28° to fly upper-right
+         All paths are pre-rotated; pivot = (54, 54)
+         ════════════════════════════════════════════════════════════ -->
+
+    <!-- – – TAIL FINS – – -->
+
+    <!-- Upper horizontal stabiliser -->
+    <path
+        android:fillColor="#7C3AED"
+        android:pathData="
+            M29,47
+            L21,33
+            L16,35
+            L24,47
+            Z"/>
+
+    <!-- Lower horizontal stabiliser -->
+    <path
+        android:fillColor="#7C3AED"
+        android:pathData="
+            M29,57
+            L21,71
+            L16,69
+            L24,57
+            Z"/>
+
+    <!-- Vertical tail fin -->
+    <path
+        android:fillColor="#9333EA"
+        android:pathData="
+            M24,52
+            L14,35
+            L18,33
+            L28,50
+            Z"/>
+
+    <!-- Tail-fin highlight edge -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#C084FC"
+        android:strokeWidth="0.7"
+        android:strokeLineCap="round"
+        android:pathData="M24,52 L14,35"/>
+
+    <!-- – – ENGINE PODS – – -->
+
+    <!-- Upper engine nacelle -->
+    <path
+        android:fillColor="#5B21B6"
+        android:pathData="
+            M36,36
+            Q50,31 64,36
+            Q50,41 36,36
+            Z"/>
+
+    <!-- Upper engine intake -->
+    <path
+        android:fillColor="#3B0764"
+        android:pathData="
+            M36,34
+            Q34,36 36,38
+            Q38,36 36,34
+            Z"/>
+
+    <!-- Upper engine exhaust glow -->
+    <path
+        android:fillColor="#F0ABFC"
+        android:pathData="
+            M37,35
+            Q35.5,36 37,37
+            Q38.5,36 37,35
+            Z"/>
+
+    <!-- Lower engine nacelle -->
+    <path
+        android:fillColor="#5B21B6"
+        android:pathData="
+            M36,72
+            Q50,67 64,72
+            Q50,77 36,72
+            Z"/>
+
+    <!-- Lower engine intake -->
+    <path
+        android:fillColor="#3B0764"
+        android:pathData="
+            M36,70
+            Q34,72 36,74
+            Q38,72 36,70
+            Z"/>
+
+    <!-- Lower engine exhaust glow -->
+    <path
+        android:fillColor="#F0ABFC"
+        android:pathData="
+            M37,71
+            Q35.5,72 37,73
+            Q38.5,72 37,71
+            Z"/>
+
+    <!-- – – MAIN WINGS – – -->
+
+    <!-- Upper wing -->
     <path
         android:fillColor="#A855F7"
-        android:pathData="M54,60 L63,60 L63,80 L58.5,86 L54,80 Z"/>
+        android:pathData="
+            M60,49
+            L48,20
+            L22,25
+            L32,49
+            Z"/>
+
+    <!-- Upper wing highlight edge -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#DDD6FE"
+        android:strokeWidth="0.9"
+        android:strokeLineCap="round"
+        android:pathData="M60,49 L48,20"/>
+
+    <!-- Lower wing -->
+    <path
+        android:fillColor="#A855F7"
+        android:pathData="
+            M60,59
+            L48,88
+            L22,83
+            L32,59
+            Z"/>
+
+    <!-- Lower wing highlight edge -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#DDD6FE"
+        android:strokeWidth="0.9"
+        android:strokeLineCap="round"
+        android:pathData="M60,59 L48,88"/>
+
+    <!-- Wing-body fairing (blends wing root into fuselage) -->
+    <path
+        android:fillColor="#9333EA"
+        android:pathData="
+            M56,50
+            L44,24
+            L48,22
+            L62,50
+            Z"/>
+    <path
+        android:fillColor="#9333EA"
+        android:pathData="
+            M56,58
+            L44,84
+            L48,86
+            L62,58
+            Z"/>
+
+    <!-- – – FUSELAGE – – -->
+
+    <!-- Main tube -->
+    <path
+        android:fillColor="#E9D5FF"
+        android:pathData="
+            M28,50
+            Q28,44 54,44
+            Q80,44 94,50
+            Q80,56 54,56
+            Q28,56 28,50
+            Z"/>
+
+    <!-- Fuselage shading (top) — gives slight 3-D feel -->
+    <path
+        android:fillColor="#C4B5FD"
+        android:pathData="
+            M28,50
+            Q28,44 54,44
+            Q80,44 94,50
+            Q80,48 54,48
+            Q28,48 28,50
+            Z"/>
+
+    <!-- – – NOSE CONE – – -->
+
+    <!-- Pink nose -->
+    <path
+        android:fillColor="#EC4899"
+        android:pathData="
+            M91,50
+            Q100,46 108,50
+            Q100,54 91,50
+            Z"/>
+
+    <!-- Nose highlight -->
+    <path
+        android:fillColor="#FBCFE8"
+        android:pathData="
+            M93,50
+            Q100,47 106,50
+            Q100,52 93,50
+            Z"/>
+
+    <!-- – – COCKPIT WINDOWS – – -->
+
+    <!-- Window 1 -->
+    <path
+        android:fillColor="#F3E8FF"
+        android:pathData="
+            M75,47
+            a3.2,3.2 0 1,0 0.01,0
+            Z"/>
+
+    <!-- Window 2 -->
+    <path
+        android:fillColor="#EDE9FE"
+        android:pathData="
+            M65,47
+            a3.2,3.2 0 1,0 0.01,0
+            Z"/>
+
+    <!-- Window 3 (smaller) -->
+    <path
+        android:fillColor="#DDD6FE"
+        android:pathData="
+            M56,47.5
+            a2.5,2.5 0 1,0 0.01,0
+            Z"/>
+
+    <!-- Window glint -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="
+            M76,47
+            a1,1 0 1,0 0.01,0
+            Z"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="
+            M66,47
+            a1,1 0 1,0 0.01,0
+            Z"/>
+
+    <!-- – – DESTINATION DOT (upper right) – – -->
+
+    <path
+        android:fillColor="#C084FC"
+        android:pathData="
+            M88,28
+            m-4,0
+            a4,4 0 1,0 8,0
+            a4,4 0 1,0 -8,0 Z"/>
+
+    <path
+        android:fillColor="#33C084FC"
+        android:pathData="
+            M88,28
+            m-7,0
+            a7,7 0 1,0 14,0
+            a7,7 0 1,0 -14,0 Z"/>
 
 </vector>

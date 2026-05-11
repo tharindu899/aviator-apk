@@ -1,21 +1,197 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    ic_splash.xml
+    Place at: app/src/main/res/drawable/ic_splash.xml
+
+    Used as the splash screen animated icon and as the small notification icon.
+    Kept slightly simpler than the launcher foreground so it reads well
+    at small sizes (notification bar ~24dp) and also looks great at full size.
+    All content within 108×108dp viewport.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
+    <!-- ── Signal arcs ────────────────────────────────────────────────── -->
+
     <path
-        android:fillColor="#A855F7"
-        android:pathData="M54,20 L62,20 L62,70 L54,70 Z"/>
+        android:fillColor="#00000000"
+        android:strokeColor="#C084FC"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M66,70 Q78,57 88,42"/>
+
     <path
-        android:fillColor="#A855F7"
-        android:pathData="M22,38 L54,34 L54,56 L22,52 Z"/>
+        android:fillColor="#00000000"
+        android:strokeColor="#A855F7"
+        android:strokeWidth="0.9"
+        android:strokeLineCap="round"
+        android:pathData="M60,76 Q78,55 92,34"/>
+
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#9333EA"
+        android:strokeWidth="0.65"
+        android:strokeLineCap="round"
+        android:pathData="M54,82 Q78,53 94,26"/>
+
+    <!-- Signal origin dot -->
     <path
         android:fillColor="#EC4899"
-        android:pathData="M62,34 L86,38 L86,52 L62,56 Z"/>
+        android:pathData="M63,72 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z"/>
+
+    <path
+        android:fillColor="#33EC4899"
+        android:pathData="M63,72 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0 Z"/>
+
+    <!-- ── Speed lines ──────────────────────────────────────────────── -->
+
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#A855F7"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:pathData="M14,50 L26,50"/>
+
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#A855F7"
+        android:strokeWidth="0.8"
+        android:strokeLineCap="round"
+        android:pathData="M16,54 L26,54"/>
+
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#C084FC"
+        android:strokeWidth="0.6"
+        android:strokeLineCap="round"
+        android:pathData="M18,58 L27,58"/>
+
+    <!-- ── Tail fins ─────────────────────────────────────────────────── -->
+
+    <path
+        android:fillColor="#7C3AED"
+        android:pathData="M29,47 L21,33 L16,35 L24,47 Z"/>
+
+    <path
+        android:fillColor="#7C3AED"
+        android:pathData="M29,57 L21,71 L16,69 L24,57 Z"/>
+
+    <path
+        android:fillColor="#9333EA"
+        android:pathData="M24,52 L14,35 L18,33 L28,50 Z"/>
+
+    <!-- ── Engine nacelles ───────────────────────────────────────────── -->
+
+    <path
+        android:fillColor="#5B21B6"
+        android:pathData="M36,36 Q50,31 64,36 Q50,41 36,36 Z"/>
+
+    <path
+        android:fillColor="#3B0764"
+        android:pathData="M36,34 Q34,36 36,38 Q38,36 36,34 Z"/>
+
+    <path
+        android:fillColor="#5B21B6"
+        android:pathData="M36,72 Q50,67 64,72 Q50,77 36,72 Z"/>
+
+    <path
+        android:fillColor="#3B0764"
+        android:pathData="M36,70 Q34,72 36,74 Q38,72 36,70 Z"/>
+
+    <!-- Engine glows -->
+    <path
+        android:fillColor="#F0ABFC"
+        android:pathData="M37,35 Q35.5,36 37,37 Q38.5,36 37,35 Z"/>
+    <path
+        android:fillColor="#F0ABFC"
+        android:pathData="M37,71 Q35.5,72 37,73 Q38.5,72 37,71 Z"/>
+
+    <!-- ── Main wings ─────────────────────────────────────────────────── -->
+
     <path
         android:fillColor="#A855F7"
-        android:pathData="M54,62 L62,62 L62,82 L58,88 L54,82 Z"/>
+        android:pathData="M60,49 L48,20 L22,25 L32,49 Z"/>
+
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#DDD6FE"
+        android:strokeWidth="1.0"
+        android:strokeLineCap="round"
+        android:pathData="M60,49 L48,20"/>
+
+    <path
+        android:fillColor="#A855F7"
+        android:pathData="M60,59 L48,88 L22,83 L32,59 Z"/>
+
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#DDD6FE"
+        android:strokeWidth="1.0"
+        android:strokeLineCap="round"
+        android:pathData="M60,59 L48,88"/>
+
+    <!-- Wing-body fairing -->
+    <path
+        android:fillColor="#9333EA"
+        android:pathData="M56,50 L44,24 L48,22 L62,50 Z"/>
+    <path
+        android:fillColor="#9333EA"
+        android:pathData="M56,58 L44,84 L48,86 L62,58 Z"/>
+
+    <!-- ── Fuselage ───────────────────────────────────────────────────── -->
+
+    <path
+        android:fillColor="#E9D5FF"
+        android:pathData="M28,50 Q28,44 54,44 Q80,44 94,50 Q80,56 54,56 Q28,56 28,50 Z"/>
+
+    <!-- Shading top half -->
+    <path
+        android:fillColor="#C4B5FD"
+        android:pathData="M28,50 Q28,44 54,44 Q80,44 94,50 Q80,48 54,48 Q28,48 28,50 Z"/>
+
+    <!-- ── Nose cone ──────────────────────────────────────────────────── -->
+
+    <path
+        android:fillColor="#EC4899"
+        android:pathData="M91,50 Q100,46 108,50 Q100,54 91,50 Z"/>
+
+    <path
+        android:fillColor="#FBCFE8"
+        android:pathData="M93,50 Q100,47 106,50 Q100,52 93,50 Z"/>
+
+    <!-- ── Cockpit windows ────────────────────────────────────────────── -->
+
+    <path
+        android:fillColor="#F3E8FF"
+        android:pathData="M75,47 a3.2,3.2 0 1,0 0.01,0 Z"/>
+
+    <path
+        android:fillColor="#EDE9FE"
+        android:pathData="M65,47 a3.2,3.2 0 1,0 0.01,0 Z"/>
+
+    <path
+        android:fillColor="#DDD6FE"
+        android:pathData="M56,47.5 a2.5,2.5 0 1,0 0.01,0 Z"/>
+
+    <!-- Window glints -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M76,47 a1,1 0 1,0 0.01,0 Z"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M66,47 a1,1 0 1,0 0.01,0 Z"/>
+
+    <!-- ── Destination dot (top-right) ───────────────────────────────── -->
+
+    <path
+        android:fillColor="#C084FC"
+        android:pathData="M88,28 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z"/>
+
+    <path
+        android:fillColor="#33C084FC"
+        android:pathData="M88,28 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0 Z"/>
 
 </vector>

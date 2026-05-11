@@ -1,4 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    ic_launcher.xml  (and ic_launcher_round.xml — they are identical)
+    Place this file at ALL of the following paths:
+      app/src/main/res/mipmap-hdpi/ic_launcher.xml
+      app/src/main/res/mipmap-hdpi/ic_launcher_round.xml
+      app/src/main/res/mipmap-mdpi/ic_launcher.xml
+      app/src/main/res/mipmap-mdpi/ic_launcher_round.xml
+      app/src/main/res/mipmap-xhdpi/ic_launcher.xml
+      app/src/main/res/mipmap-xhdpi/ic_launcher_round.xml
+      app/src/main/res/mipmap-xxhdpi/ic_launcher.xml
+      app/src/main/res/mipmap-xxhdpi/ic_launcher_round.xml
+      app/src/main/res/mipmap-xxxhdpi/ic_launcher.xml
+      app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.xml
+
+    The adaptive-icon format uses ic_launcher_background (color) and
+    ic_launcher_foreground (vector) to compose the final icon at runtime.
+    The launcher clips them to its preferred shape (circle, squircle, etc.).
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background"/>
     <foreground android:drawable="@drawable/ic_launcher_foreground"/>

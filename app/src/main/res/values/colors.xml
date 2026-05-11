@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    colors.xml
+    Place at: app/src/main/res/values/colors.xml
+-->
 <resources>
-    <color name="ic_launcher_background">#0F172A</color>
+    <!-- Adaptive icon background — deep purple-black matching the app's dark theme -->
+    <color name="ic_launcher_background">#1A0533</color>
 </resources>
