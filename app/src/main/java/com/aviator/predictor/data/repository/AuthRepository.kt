@@ -8,14 +8,13 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.google.android.gms.auth.GoogleAuthUtil
+import com.google.android.gms.auth.UserRecoverableAuthException
 import com.google.android.libraries.identity.googleid.*
 import com.aviator.predictor.BuildConfig
 import com.aviator.predictor.data.models.UserProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import java.security.MessageDigest
-import java.util.UUID
 
 // ── DataStore instance (one per app) ─────────────────────────────────────────
 private val Context.sessionDataStore by preferencesDataStore(name = "aviator_session")
@@ -27,7 +26,8 @@ data class AuthResult(
     val token: String = "",
     val idToken: String = "",
     val profile: UserProfile? = null,
-    val error: String = ""
+    val error: String = "",
+    val needsConsentRetry: Boolean = false   // true when consent screen was launched
 )
 
 class AuthRepository(private val context: Context) {
@@ -47,7 +47,9 @@ class AuthRepository(private val context: Context) {
             val email = prefs[KEY_EMAIL]
                 ?: return@withContext AuthResult(false, error = "No saved session")
 
-            val token = getTokenForEmail(email)
+            // No activity available during restore — if consent is needed,
+            // this returns null and we fall back to the sign-in screen.
+            val token = getTokenForEmail(email, activity = null)
                 ?: return@withContext AuthResult(false, error = "Token refresh failed")
 
             val profile = UserProfile(
@@ -85,8 +87,19 @@ class AuthRepository(private val context: Context) {
                 val idToken    = googleCred.idToken
                 val email      = googleCred.id
 
-                val accessToken = getTokenForEmail(email)
-                    ?: return@withContext AuthResult(false, error = "Failed to get Drive access token")
+                // Pass the activity so UserRecoverableAuthException can be handled
+                // (new accounts need to grant Drive consent on first sign-in).
+                val accessToken = getTokenForEmail(email, activity)
+
+                if (accessToken == null) {
+                    // getTokenForEmail already launched the consent screen.
+                    // Tell the user to tap "Sign In" again after granting access.
+                    return@withContext AuthResult(
+                        success          = false,
+                        needsConsentRetry = true,
+                        error            = "Google Drive access required.\n\nPlease grant access in the screen that just opened, then tap \"Continue with Google\" again."
+                    )
+                }
 
                 val profile = UserProfile(
                     uid         = email,
@@ -118,26 +131,48 @@ class AuthRepository(private val context: Context) {
     // ── Token helpers ─────────────────────────────────────────────────────
 
     /**
-     * Returns a valid (possibly cached) access token.
-     * GoogleAuthUtil.getToken() handles cache internally and refreshes
-     * automatically when needed.
+     * Returns a valid (possibly cached) Drive access token for [email].
+     *
+     * If [activity] is provided and the account has never granted Drive consent,
+     * [UserRecoverableAuthException] is caught, its consent Intent is launched,
+     * and null is returned so the caller can show a "try again" message.
+     *
+     * If [activity] is null (e.g. silent session restore), the exception is
+     * swallowed and null is returned — the caller falls back to the sign-in screen.
      */
-    private suspend fun getTokenForEmail(email: String): String? =
-        withContext(Dispatchers.IO) {
-            try {
-                GoogleAuthUtil.getToken(context, email, DRIVE_SCOPE)
-            } catch (e: Exception) {
-                null
+    private suspend fun getTokenForEmail(
+        email: String,
+        activity: Activity?
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            GoogleAuthUtil.getToken(context, email, DRIVE_SCOPE)
+        } catch (e: UserRecoverableAuthException) {
+            // The account exists but Drive consent hasn't been granted yet.
+            // Launch the consent screen if we have an Activity to attach to.
+            if (activity != null) {
+                withContext(Dispatchers.Main) {
+                    try {
+                        activity.startActivity(e.intent)
+                    } catch (ignored: Exception) {
+                        // Intent couldn't be launched (rare) — fall through to null
+                    }
+                }
             }
+            null
+        } catch (e: Exception) {
+            null
         }
+    }
 
     /**
      * Force-refreshes the access token by:
      *  1. Fetching the currently-cached token (so we have the string to invalidate).
-     *  2. Calling clearToken(context, token) — the 2-arg overload — to evict it.
+     *  2. Calling clearToken(context, token) to evict it.
      *  3. Calling getToken() again to obtain a fresh one from the network.
      *
      * Called after receiving HTTP 401 from the Drive API.
+     * No activity needed here — if the token is truly expired (not missing consent)
+     * GoogleAuthUtil will refresh it silently.
      */
     suspend fun refreshAccessToken(email: String): String? =
         withContext(Dispatchers.IO) {
@@ -147,13 +182,16 @@ class AuthRepository(private val context: Context) {
                     GoogleAuthUtil.getToken(context, email, DRIVE_SCOPE)
                 } catch (_: Exception) { null }
 
-                // Step 2: invalidate it — clearToken takes (Context, tokenString)
+                // Step 2: invalidate it
                 if (!cachedToken.isNullOrBlank()) {
                     try { GoogleAuthUtil.clearToken(context, cachedToken) } catch (_: Exception) {}
                 }
 
                 // Step 3: fetch a fresh token from the network
                 GoogleAuthUtil.getToken(context, email, DRIVE_SCOPE)
+            } catch (e: UserRecoverableAuthException) {
+                // Consent was revoked — caller should prompt the user to sign in again
+                null
             } catch (e: Exception) {
                 null
             }
