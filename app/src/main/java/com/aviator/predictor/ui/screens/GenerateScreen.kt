@@ -287,8 +287,13 @@ fun GenerateScreen(
 // Output is always:  "12.32x 09:18:18"
 
 private fun normalizeSignalInput(raw: String): String {
+    // Step 0 — collapse multi-line paste (e.g. "12.32x\n09:18:18") into one line.
     var s = raw.trim()
-
+        .lines()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .joinToString(" ")
+        
     // Step 1 — convert dot-separated time segment to colons.
     // Match a time-like token  NN.NN.NN  (1-2 digits . 2 digits . 2 digits)
     // that follows the multiplier+x, optionally separated by whitespace.
