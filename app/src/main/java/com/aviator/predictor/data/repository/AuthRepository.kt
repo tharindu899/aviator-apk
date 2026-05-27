@@ -41,6 +41,32 @@ class AuthRepository(private val context: Context) {
     private val KEY_UID          = stringPreferencesKey("uid")
 
     // ── Restore session (called on every app start — no UI shown) ─────────
+
+    /**
+     * Fast path — reads only from DataStore (disk).
+     * Returns the saved profile in milliseconds with zero network calls.
+     * Used to dismiss the splash screen and show cached signals immediately.
+     */
+    suspend fun tryRestoreSessionFast(): UserProfile? = withContext(Dispatchers.IO) {
+        try {
+            val prefs = context.sessionDataStore.data.first()
+            val email = prefs[KEY_EMAIL] ?: return@withContext null
+            UserProfile(
+                uid         = prefs[KEY_UID]          ?: email,
+                email       = email,
+                displayName = prefs[KEY_DISPLAY_NAME] ?: "",
+                photoUrl    = prefs[KEY_PHOTO_URL]    ?: "",
+                lastLoginAt = System.currentTimeMillis()
+            )
+        } catch (_: Exception) { null }
+    }
+
+    /**
+     * Slow path — fetches/refreshes the Google OAuth token (may hit the network).
+     * Call this in a background coroutine AFTER the UI is already visible.
+     */
+    suspend fun fetchToken(email: String): String? = getTokenForEmail(email, activity = null)
+
     suspend fun tryRestoreSession(): AuthResult = withContext(Dispatchers.IO) {
         try {
             val prefs = context.sessionDataStore.data.first()

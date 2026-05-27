@@ -129,33 +129,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun tryRestoreSession() {
         viewModelScope.launch {
-            val result = authRepo.tryRestoreSession()
-            if (result.success && result.profile != null) {
 
-                // ── Step 1: show cached signals INSTANTLY ──────────────────
-                val cached   = driveRepo.loadCachedSignals()
-                val computed = computeUpcoming(cached)
-                _state.update {
-                    it.copy(
-                        isSignedIn      = true,
-                        user            = result.profile,
-                        accessToken     = result.token,
-                        isAuthLoading   = false,
-                        signals         = cached,
-                        upcomingSignals = computed.first,
-                        currentSignal   = computed.second,
-                        syncStatus      = if (cached.isNotEmpty()) SyncStatus.SYNCED else SyncStatus.PENDING
-                    )
+            // ── Step 1: Instant (disk only, ~50ms) ────────────────────────
+            // Read profile from DataStore — zero network calls.
+            // Dismiss splash and show cached signals immediately.
+            val profile = authRepo.tryRestoreSessionFast()
+            if (profile == null) {
+                _state.update { it.copy(isAuthLoading = false) }
+                checkForUpdate()
+                return@launch
+            }
+
+            val cached   = driveRepo.loadCachedSignals()
+            val computed = computeUpcoming(cached)
+            _state.update {
+                it.copy(
+                    isSignedIn      = true,
+                    user            = profile,
+                    isAuthLoading   = false,           // splash gone, UI visible NOW
+                    signals         = cached,
+                    upcomingSignals = computed.first,
+                    currentSignal   = computed.second,
+                    syncStatus      = if (cached.isNotEmpty()) SyncStatus.SYNCED else SyncStatus.PENDING
+                )
+            }
+            startCountdownUpdater()
+
+            // ── Step 2: Background (may hit network to refresh OAuth token) ─
+            // Happens after the UI is already showing — user never waits for this.
+            launch {
+                val token = authRepo.fetchToken(profile.email)
+                if (token.isNullOrBlank()) {
+                    // Token unavailable — require fresh sign-in
+                    _state.update {
+                        it.copy(
+                            isSignedIn  = false,
+                            syncStatus  = SyncStatus.ERROR,
+                            error       = "Session expired — please sign in again"
+                        )
+                    }
+                    return@launch
                 }
-
-                // ── Step 2: sync with Drive in background ──────────────────
-                loadAllData(result.token)
-                startCountdownUpdater()
+                _state.update { it.copy(accessToken = token) }
+                loadAllData(token)
                 startPeriodicSync()
                 startTokenRefreshLoop()
-            } else {
-                _state.update { it.copy(isAuthLoading = false) }
             }
+
             checkForUpdate()
         }
     }
