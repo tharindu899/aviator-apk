@@ -238,6 +238,12 @@ object UpdateInstaller {
         } catch (_: Exception) {}
 
         context.startActivity(intent)
+
+        // Schedule APK deletion after a short delay so the package installer
+        // has time to fully read the file before we remove it.
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            cleanOldApks(context)
+        }, 8_000L)   // 8 seconds — plenty of time for the installer to copy the APK
     }
 
     private fun copyToInternalFiles(context: Context, src: File): File? {

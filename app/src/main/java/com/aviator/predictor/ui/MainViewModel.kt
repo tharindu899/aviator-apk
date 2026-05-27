@@ -79,6 +79,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         NotificationHelper.createChannel(application)
+        UpdateInstaller.cleanOldApks(application)   // delete any APK left over from a previous update
         startAutoMarkMissed()
         collectPendingActions()
         tryRestoreSession()
