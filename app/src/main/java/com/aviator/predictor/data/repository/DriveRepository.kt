@@ -30,66 +30,127 @@ class DriveRepository(private val context: Context) {
     private val PROFILE_FILE  = "aviator_profile.json"
     private val SETTINGS_FILE = "aviator_settings.json"
 
-    // ── File ID cache (in-memory, reset on sign-out) ──────────────────────
+    // ── SharedPreferences (local cache + persisted file IDs) ──────────────
 
-    private var signalsFileId:  String? = null
-    private var profileFileId:  String? = null
-    private var settingsFileId: String? = null
+    private val PREFS_NAME            = "aviator_local_cache"
+    private val CACHE_SIGNALS_KEY     = "signals_json"
+    private val CACHE_SIGNALS_FILE_ID = "drive_file_id_signals"
+    private val CACHE_PROFILE_FILE_ID = "drive_file_id_profile"
+    private val CACHE_SETTINGS_FILE_ID= "drive_file_id_settings"
+
+    private val prefs by lazy {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    // ── In-memory file ID cache (cleared on sign-out / token refresh) ─────
+    //   Populated first from disk (instant, no network), then confirmed by Drive.
+
+    private var signalsFileId:  String? = prefs.getString(CACHE_SIGNALS_FILE_ID,  null)
+    private var profileFileId:  String? = prefs.getString(CACHE_PROFILE_FILE_ID,  null)
+    private var settingsFileId: String? = prefs.getString(CACHE_SETTINGS_FILE_ID, null)
+
+    // ── Local signal cache ────────────────────────────────────────────────
+
+    /** Read signals from disk — instant, no network. */
+    fun loadCachedSignals(): List<Signal> = try {
+        val json = prefs.getString(CACHE_SIGNALS_KEY, null) ?: return emptyList()
+        gson.fromJson(json, Array<Signal>::class.java)?.toList() ?: emptyList()
+    } catch (_: Exception) { emptyList() }
+
+    /** Persist signals locally; called every time signals change. */
+    fun cacheSignals(signals: List<Signal>) {
+        try { prefs.edit().putString(CACHE_SIGNALS_KEY, gson.toJson(signals)).apply() }
+        catch (_: Exception) { /* best-effort */ }
+    }
+
+    fun clearLocalCache() {
+        prefs.edit().clear().apply()
+        signalsFileId  = null
+        profileFileId  = null
+        settingsFileId = null
+    }
 
     // ── Signals ───────────────────────────────────────────────────────────
 
+    /** Load from Drive and update local cache. */
     suspend fun loadSignals(token: String): List<Signal> = withContext(Dispatchers.IO) {
         val fileId  = findOrCreateFileId(token, SIGNALS_FILE)
-        val content = readFile(token, fileId)           // throws DriveAuthException on 401
+        val content = readFile(token, fileId)
         if (content.isBlank() || content == "null") return@withContext emptyList()
-        gson.fromJson(content, Array<Signal>::class.java)?.toList() ?: emptyList()
+        val signals = gson.fromJson(content, Array<Signal>::class.java)?.toList() ?: emptyList()
+        cacheSignals(signals)
+        signals
     }
 
+    /**
+     * Write [signals] directly to Drive — NO pre-read.
+     * The caller (ViewModel) already owns the authoritative in-memory list.
+     */
     suspend fun saveSignals(token: String, signals: List<Signal>): Boolean =
         withContext(Dispatchers.IO) {
             val fileId = findOrCreateFileId(token, SIGNALS_FILE)
-            writeFile(token, fileId, gson.toJson(signals))  // throws on 401
+            val ok = writeFile(token, fileId, gson.toJson(signals))
+            if (ok) cacheSignals(signals)   // keep local cache in sync
+            ok
         }
 
-    suspend fun addSignal(token: String, signal: Signal): Boolean = withContext(Dispatchers.IO) {
-        val current = loadSignals(token).toMutableList()
-        current.add(0, signal)
-        saveSignals(token, current)
+    /**
+     * Add a new signal.
+     * [currentSignals] — the ViewModel's in-memory list; no Drive read needed.
+     */
+    suspend fun addSignal(
+        token: String,
+        signal: Signal,
+        currentSignals: List<Signal>
+    ): Boolean = withContext(Dispatchers.IO) {
+        val updated = listOf(signal) + currentSignals
+        saveSignals(token, updated)
     }
 
+    /**
+     * Update a single signal's status.
+     * [currentSignals] — the ViewModel's in-memory list; no Drive read needed.
+     */
     suspend fun updateSignalStatus(
         token: String,
         signalId: String,
-        status: SignalStatus
+        status: SignalStatus,
+        currentSignals: List<Signal>
     ): Boolean = withContext(Dispatchers.IO) {
-        val current = loadSignals(token).toMutableList()
-        val index   = current.indexOfFirst { it.id == signalId }
-        if (index == -1) return@withContext false
-        current[index] = current[index].copy(
-            status    = status,
-            updatedAt = System.currentTimeMillis()
-        )
-        saveSignals(token, current)
+        val now     = System.currentTimeMillis()
+        val updated = currentSignals.map { s ->
+            if (s.id == signalId) s.copy(status = status, updatedAt = now) else s
+        }
+        saveSignals(token, updated)
     }
 
-    suspend fun deleteSignal(token: String, signalId: String): Boolean =
-        withContext(Dispatchers.IO) {
-            val current = loadSignals(token).filter { it.id != signalId }
-            saveSignals(token, current)
-        }
+    /**
+     * Delete a signal.
+     * [currentSignals] — the ViewModel's in-memory list; no Drive read needed.
+     */
+    suspend fun deleteSignal(
+        token: String,
+        signalId: String,
+        currentSignals: List<Signal>
+    ): Boolean = withContext(Dispatchers.IO) {
+        saveSignals(token, currentSignals.filter { it.id != signalId })
+    }
 
+    /**
+     * Batch-update statuses (auto-mark missed).
+     * [currentSignals] — the ViewModel's in-memory list; no Drive read needed.
+     */
     suspend fun batchUpdateStatus(
         token: String,
-        updates: Map<String, SignalStatus>
+        updates: Map<String, SignalStatus>,
+        currentSignals: List<Signal>
     ): Boolean = withContext(Dispatchers.IO) {
-        val current = loadSignals(token).toMutableList()
         val now     = System.currentTimeMillis()
-        for (i in current.indices) {
-            val newStatus = updates[current[i].id]
-            if (newStatus != null)
-                current[i] = current[i].copy(status = newStatus, updatedAt = now)
+        val updated = currentSignals.map { s ->
+            val newStatus = updates[s.id]
+            if (newStatus != null) s.copy(status = newStatus, updatedAt = now) else s
         }
-        saveSignals(token, current)
+        saveSignals(token, updated)
     }
 
     // ── Profile ───────────────────────────────────────────────────────────
@@ -126,15 +187,16 @@ class DriveRepository(private val context: Context) {
 
     private suspend fun findOrCreateFileId(token: String, fileName: String): String =
         withContext(Dispatchers.IO) {
-            val cached = when (fileName) {
+            // 1. In-memory hit — zero network calls
+            val mem = when (fileName) {
                 SIGNALS_FILE  -> signalsFileId
                 PROFILE_FILE  -> profileFileId
                 SETTINGS_FILE -> settingsFileId
                 else          -> null
             }
-            if (cached != null) return@withContext cached
+            if (mem != null) return@withContext mem
 
-            // Search for existing file in appDataFolder
+            // 2. Search Drive
             val searchUrl = "https://www.googleapis.com/drive/v3/files" +
                 "?spaces=appDataFolder&q=name='$fileName'&fields=files(id,name)"
 
@@ -147,16 +209,16 @@ class DriveRepository(private val context: Context) {
 
             if (searchResp.code == 401) throw DriveAuthException()
 
-            val searchBody  = searchResp.body?.string() ?: "{}"
-            val idRegex     = Regex(""""id"\s*:\s*"([^"]+)"""")
-            val existingId  = idRegex.find(searchBody)?.groupValues?.get(1)
+            val searchBody = searchResp.body?.string() ?: "{}"
+            val idRegex    = Regex(""""id"\s*:\s*"([^"]+)"""")
+            val existingId = idRegex.find(searchBody)?.groupValues?.get(1)
 
             if (existingId != null) {
-                cacheFileId(fileName, existingId)
+                persistFileId(fileName, existingId)
                 return@withContext existingId
             }
 
-            // Create new file
+            // 3. Create new file
             val createBody = """{"name":"$fileName","parents":["appDataFolder"]}"""
             val createResp = client.newCall(
                 Request.Builder()
@@ -173,23 +235,19 @@ class DriveRepository(private val context: Context) {
                 ?: throw Exception("Failed to create Drive file: $fileName")
 
             writeFile(token, newId, "[]")
-            cacheFileId(fileName, newId)
+            persistFileId(fileName, newId)
             newId
         }
 
-    private fun cacheFileId(fileName: String, id: String) {
+    /** Save file ID both in-memory and on disk so it survives app restarts. */
+    private fun persistFileId(fileName: String, id: String) {
         when (fileName) {
-            SIGNALS_FILE  -> signalsFileId  = id
-            PROFILE_FILE  -> profileFileId  = id
-            SETTINGS_FILE -> settingsFileId = id
+            SIGNALS_FILE  -> { signalsFileId  = id; prefs.edit().putString(CACHE_SIGNALS_FILE_ID,  id).apply() }
+            PROFILE_FILE  -> { profileFileId  = id; prefs.edit().putString(CACHE_PROFILE_FILE_ID,  id).apply() }
+            SETTINGS_FILE -> { settingsFileId = id; prefs.edit().putString(CACHE_SETTINGS_FILE_ID, id).apply() }
         }
     }
 
-    /**
-     * Read a Drive file's content.
-     * @throws DriveAuthException on HTTP 401 so the caller can refresh the token.
-     * @throws Exception on other HTTP errors or network failures.
-     */
     private fun readFile(token: String, fileId: String): String {
         val resp = client.newCall(
             Request.Builder()
@@ -197,17 +255,11 @@ class DriveRepository(private val context: Context) {
                 .addHeader("Authorization", "Bearer $token")
                 .build()
         ).execute()
-
         if (resp.code == 401) throw DriveAuthException()
         if (!resp.isSuccessful) throw Exception("Drive read failed: HTTP ${resp.code}")
         return resp.body?.string() ?: ""
     }
 
-    /**
-     * Write content to a Drive file.
-     * @throws DriveAuthException on HTTP 401.
-     * @throws Exception on other failures.
-     */
     private fun writeFile(token: String, fileId: String, content: String): Boolean {
         val resp = client.newCall(
             Request.Builder()
@@ -216,22 +268,16 @@ class DriveRepository(private val context: Context) {
                 .patch(content.toRequestBody("application/json".toMediaType()))
                 .build()
         ).execute()
-
         if (resp.code == 401) throw DriveAuthException()
         if (!resp.isSuccessful) throw Exception("Drive write failed: HTTP ${resp.code}")
         return true
     }
 
     /**
-     * Drop the in-memory file-ID cache.
-     * Call on sign-out or after a token refresh so the next operation
-     * re-validates file IDs with the new token.
+     * Drop all caches.
+     * Call on sign-out so the next user starts fresh.
      */
-    fun clearCache() {
-        signalsFileId  = null
-        profileFileId  = null
-        settingsFileId = null
-    }
+    fun clearCache() = clearLocalCache()
 
     fun newSignalId(): String = UUID.randomUUID().toString()
 }

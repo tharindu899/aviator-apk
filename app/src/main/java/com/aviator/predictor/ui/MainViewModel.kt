@@ -89,7 +89,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun currentToken(): String {
         val stored = _state.value.accessToken
         if (stored.isNotBlank()) return stored
-
         val email = _state.value.user?.email ?: return ""
         val fresh = authRepo.refreshAccessToken(email) ?: return ""
         _state.update { it.copy(accessToken = fresh) }
@@ -100,7 +99,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return try {
             block(currentToken())
         } catch (e: DriveAuthException) {
-            // Only one coroutine refreshes at a time; others wait and reuse the result.
             val newToken = tokenMutex.withLock {
                 val email = _state.value.user?.email ?: throw e
                 val refreshed = authRepo.refreshAccessToken(email)
@@ -121,9 +119,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (!_state.value.isSignedIn) continue
                 val email = _state.value.user?.email ?: continue
                 val fresh = authRepo.refreshAccessToken(email)
-                if (fresh != null) {
-                    _state.update { it.copy(accessToken = fresh) }
-                }
+                if (fresh != null) _state.update { it.copy(accessToken = fresh) }
             }
         }
     }
@@ -134,14 +130,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val result = authRepo.tryRestoreSession()
             if (result.success && result.profile != null) {
+
+                // ── Step 1: show cached signals INSTANTLY ──────────────────
+                val cached   = driveRepo.loadCachedSignals()
+                val computed = computeUpcoming(cached)
                 _state.update {
                     it.copy(
-                        isSignedIn    = true,
-                        user          = result.profile,
-                        accessToken   = result.token,
-                        isAuthLoading = false
+                        isSignedIn      = true,
+                        user            = result.profile,
+                        accessToken     = result.token,
+                        isAuthLoading   = false,
+                        signals         = cached,
+                        upcomingSignals = computed.first,
+                        currentSignal   = computed.second,
+                        syncStatus      = if (cached.isNotEmpty()) SyncStatus.SYNCED else SyncStatus.PENDING
                     )
                 }
+
+                // ── Step 2: sync with Drive in background ──────────────────
                 loadAllData(result.token)
                 startCountdownUpdater()
                 startPeriodicSync()
@@ -248,18 +254,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         it.copy(updateDownloadState = UpdateDownloadState.ReadyToInstall(progress.localFile))
                     }
                     else -> {
-                        val elapsedSec    = (System.currentTimeMillis() - downloadStartTimeMs) / 1000f
-                        val speedBps      = if (elapsedSec > 0 && progress.downloadedBytes > 0)
+                        val elapsedSec     = (System.currentTimeMillis() - downloadStartTimeMs) / 1000f
+                        val speedBps       = if (elapsedSec > 0 && progress.downloadedBytes > 0)
                             progress.downloadedBytes / elapsedSec else 0f
                         val remainingBytes = (progress.totalBytes - progress.downloadedBytes).coerceAtLeast(0L)
-                        val eta           = if (speedBps > 1024f) (remainingBytes / speedBps).toInt() else 0
+                        val eta            = if (speedBps > 1024f) (remainingBytes / speedBps).toInt() else 0
                         _state.update {
                             it.copy(updateDownloadState = UpdateDownloadState.Downloading(
-                                percent       = progress.percent,
-                                downloadedMb  = progress.downloadedBytes / (1024f * 1024f),
-                                totalMb       = progress.totalBytes / (1024f * 1024f),
-                                etaSeconds    = eta,
-                                speedKbps     = speedBps / 1024f
+                                percent      = progress.percent,
+                                downloadedMb = progress.downloadedBytes / (1024f * 1024f),
+                                totalMb      = progress.totalBytes / (1024f * 1024f),
+                                etaSeconds   = eta,
+                                speedKbps    = speedBps / 1024f
                             ))
                         }
                     }
@@ -295,7 +301,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun loadAllData(token: String) {
         _state.update { it.copy(isLoading = true, syncStatus = SyncStatus.SYNCING) }
         try {
-            // Run all three Drive reads in parallel — 3× faster on slow connections
+            // All three Drive reads in parallel — 3× faster on slow connections.
+            // File IDs are persisted to disk so findOrCreateFileId hits the
+            // in-memory cache on every call after the first session.
             val (signals, settings, profile) = coroutineScope {
                 val sd = async { withFreshToken { t -> driveRepo.loadSignals(t) } }
                 val se = async { withFreshToken { t -> driveRepo.loadSettings(t) } }
@@ -303,7 +311,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Triple(sd.await(), se.await(), pd.await())
             }
 
-            // Show signals immediately as the first update so the UI feels snappy
             val computed = computeUpcoming(signals)
             _state.update {
                 it.copy(
@@ -345,7 +352,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── FIX: Periodic sync uses updatedAt to avoid overwriting local changes ──
     private fun startPeriodicSync() {
         syncJob?.cancel()
         syncJob = viewModelScope.launch {
@@ -357,19 +363,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val localSignals = _state.value.signals
 
                     // Merge: keep the version with the later updatedAt timestamp.
-                    // This prevents a just-saved WIN/LOSS from being overwritten
-                    // by a stale value loaded from Drive before the save arrived.
                     val localById = localSignals.associateBy { it.id }
                     val merged = driveSignals.map { ds ->
                         val local = localById[ds.id]
                         if (local != null && local.updatedAt > ds.updatedAt) local else ds
                     }
-                    // Also keep any local signals not yet present on Drive
-                    val driveIds   = driveSignals.mapTo(mutableSetOf()) { it.id }
-                    val localOnly  = localSignals.filter { it.id !in driveIds }
+                    val driveIds  = driveSignals.mapTo(mutableSetOf()) { it.id }
+                    val localOnly = localSignals.filter { it.id !in driveIds }
 
-                    val finalList  = (merged + localOnly).sortedByDescending { it.createdAt }
-                    val computed   = computeUpcoming(finalList)
+                    val finalList = (merged + localOnly).sortedByDescending { it.createdAt }
+                    val computed  = computeUpcoming(finalList)
                     _state.update {
                         it.copy(
                             signals         = finalList,
@@ -379,7 +382,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 } catch (e: DriveAuthException) {
-                    // Auth error — mark ERROR, not OFFLINE; do not overwrite signals
                     _state.update { it.copy(syncStatus = SyncStatus.ERROR) }
                 } catch (_: Exception) {
                     _state.update { it.copy(syncStatus = SyncStatus.OFFLINE) }
@@ -420,8 +422,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     NotificationHelper.cancelNotification(context, signal.id)
                 return@forEach
             }
-            val countdown  = TimeCalculations.getCountdown(signal)
-            val inWindow   = countdown <= 45 && countdown >= -45
+            val countdown    = TimeCalculations.getCountdown(signal)
+            val inWindow     = countdown <= 45 && countdown >= -45
             val windowClosed = countdown < -45
             when {
                 inWindow -> {
@@ -481,36 +483,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 windowTimes  = windowTimes
             )
 
-            try {
-                val saved = withFreshToken { t -> driveRepo.addSignal(t, newSignal) }
-                if (saved) {
-                    val newSignals = listOf(newSignal) + _state.value.signals
-                    val computed   = computeUpcoming(newSignals)
-                    _state.update {
-                        it.copy(
-                            signals         = newSignals,
-                            isGenerating    = false,
-                            syncStatus      = SyncStatus.SYNCED,
-                            upcomingSignals = computed.first,
-                            currentSignal   = computed.second
-                        )
+            // ── Optimistic UI update FIRST (instant feel) ─────────────────
+            val optimisticList = listOf(newSignal) + _state.value.signals
+            val computed       = computeUpcoming(optimisticList)
+            _state.update {
+                it.copy(
+                    signals         = optimisticList,
+                    isGenerating    = false,
+                    syncStatus      = SyncStatus.SYNCING,
+                    upcomingSignals = computed.first,
+                    currentSignal   = computed.second
+                )
+            }
+            // Update local cache immediately so it's safe even if Drive save fails
+            driveRepo.cacheSignals(optimisticList)
+            onResult(true, "Signal generated!")
+
+            // ── Save to Drive in background (no read — pass current list) ──
+            launch {
+                try {
+                    withFreshToken { t ->
+                        // Pass the in-memory list; no extra Drive read needed
+                        driveRepo.saveSignals(t, _state.value.signals)
                     }
-                    onResult(true, "Signal generated!")
-                } else {
-                    _state.update { it.copy(isGenerating = false) }
-                    onResult(false, "Failed to save signal. Check connection.")
+                    _state.update { it.copy(syncStatus = SyncStatus.SYNCED) }
+                } catch (e: DriveAuthException) {
+                    _state.update { it.copy(syncStatus = SyncStatus.ERROR) }
+                } catch (_: Exception) {
+                    _state.update { it.copy(syncStatus = SyncStatus.OFFLINE) }
                 }
-            } catch (e: Exception) {
-                _state.update { it.copy(isGenerating = false, syncStatus = SyncStatus.ERROR) }
-                onResult(false, "Error: ${e.message}")
             }
         }
     }
 
-    // ── FIX: Drive save errors now surface in syncStatus instead of being swallowed ──
+    // ── Status updates ────────────────────────────────────────────────────
+
     fun updateSignalStatus(signalId: String, status: SignalStatus) {
         viewModelScope.launch {
-            val now = System.currentTimeMillis()
+            val now      = System.currentTimeMillis()
             val updated  = _state.value.signals.map {
                 if (it.id == signalId) it.copy(status = status, updatedAt = now) else it
             }
@@ -523,12 +533,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     syncStatus      = SyncStatus.SYNCING
                 )
             }
+            driveRepo.cacheSignals(updated)
             if (notifiedSignalIds.remove(signalId))
                 NotificationHelper.cancelNotification(getApplication(), signalId)
 
             launch {
                 try {
-                    withFreshToken { t -> driveRepo.updateSignalStatus(t, signalId, status) }
+                    // Pass updated list — no Drive read
+                    withFreshToken { t -> driveRepo.saveSignals(t, updated) }
                     _state.update { it.copy(syncStatus = SyncStatus.SYNCED) }
                 } catch (e: DriveAuthException) {
                     _state.update { it.copy(syncStatus = SyncStatus.ERROR) }
@@ -539,7 +551,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── FIX: same pattern for deleteSignal ────────────────────────────────
     fun deleteSignal(signalId: String) {
         viewModelScope.launch {
             val updated  = _state.value.signals.filter { it.id != signalId }
@@ -552,12 +563,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     syncStatus      = SyncStatus.SYNCING
                 )
             }
+            driveRepo.cacheSignals(updated)
             if (notifiedSignalIds.remove(signalId))
                 NotificationHelper.cancelNotification(getApplication(), signalId)
 
             launch {
                 try {
-                    withFreshToken { t -> driveRepo.deleteSignal(t, signalId) }
+                    withFreshToken { t -> driveRepo.saveSignals(t, updated) }
                     _state.update { it.copy(syncStatus = SyncStatus.SYNCED) }
                 } catch (e: DriveAuthException) {
                     _state.update { it.copy(syncStatus = SyncStatus.ERROR) }
@@ -568,7 +580,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── FIX: same pattern for saveSettings ───────────────────────────────
     fun saveSettings(settings: AppSettings) {
         viewModelScope.launch {
             _state.update { it.copy(settings = settings, syncStatus = SyncStatus.SYNCING) }
@@ -585,7 +596,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── FIX: same pattern for saveProfile ────────────────────────────────
     fun saveProfile(profile: UserProfile) {
         viewModelScope.launch {
             _state.update { it.copy(user = profile, syncStatus = SyncStatus.SYNCING) }
@@ -623,13 +633,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val computed = computeUpcoming(updated)
                 _state.update { it.copy(signals = updated, upcomingSignals = computed.first, currentSignal = computed.second) }
+                driveRepo.cacheSignals(updated)
                 toMark.forEach { sig ->
                     if (notifiedSignalIds.remove(sig.id))
                         NotificationHelper.cancelNotification(getApplication(), sig.id)
                 }
                 launch {
                     try {
-                        withFreshToken { t -> driveRepo.batchUpdateStatus(t, updates) }
+                        // Pass in-memory list — no Drive read
+                        withFreshToken { t -> driveRepo.saveSignals(t, updated) }
                     } catch (_: Exception) {
                         // auto-mark failures are non-critical; periodic sync will retry
                     }
